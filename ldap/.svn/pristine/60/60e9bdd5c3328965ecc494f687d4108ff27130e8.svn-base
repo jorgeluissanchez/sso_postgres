@@ -1,0 +1,70 @@
+package org.minminas;
+
+import java.util.List;
+
+import org.minminas.util.ConfigProperties;
+import org.springframework.ldap.AuthenticationException;
+import org.springframework.ldap.core.LdapTemplate;
+import org.springframework.ldap.core.support.LdapContextSource;
+import org.springframework.ldap.filter.EqualsFilter;
+import org.springframework.ldap.filter.Filter;
+
+public class Ldap {
+	private static Ldap INSTANCE = new Ldap();
+
+	private Ldap() {
+	}
+
+	public static enum Response {
+		EXIST, NO_EXIST, VALID, PASSWORD_FAULT, AUTHENTICATION_FAULT, FAULT;
+
+		private Response() {
+		}
+	}
+	
+	public static Ldap getInstance() {
+		return INSTANCE;
+	}
+
+	public Response getAuthentication(String userName, String password) {
+		String base = "";
+		String directoryString = "";
+		Response response = Response.AUTHENTICATION_FAULT;
+		try {
+			base = ConfigProperties.getProperties().getString("ldap.base.schema");
+			directoryString = ConfigProperties.getProperties().getString("ldap.directoryString");
+			LdapContextSource ctxSrc = new LdapContextSource();
+			ctxSrc.setUrl(ConfigProperties.getProperties().getString("ldap.url"));
+			ctxSrc.setBase(ConfigProperties.getProperties().getString("ldap.base"));
+			ctxSrc.setUserDn(ConfigProperties.getProperties().getString("ldap.userDn"));
+			ctxSrc.setPassword(ConfigProperties.getProperties().getString("ldap.password"));
+			
+			ctxSrc.setPooled(false);
+			ctxSrc.afterPropertiesSet();
+
+			LdapTemplate lt = new LdapTemplate(ctxSrc);
+
+			Filter filter1 = new EqualsFilter(directoryString, userName);
+
+			List<String> list = lt.search(base, filter1.toString(), new ContactAttributeMapperJSON());
+
+			boolean authenticated = lt.authenticate(base, filter1.toString(), password);
+
+			if (list.isEmpty()) {
+				response = Response.NO_EXIST;
+			} else if ((authenticated == true) && (password.isEmpty())) {
+				response = Response.EXIST;
+			} else if (authenticated == true) {
+				response = Response.VALID;
+			} else {
+				response = Response.PASSWORD_FAULT;
+			}
+		} catch (AuthenticationException ae) {
+			response = Response.AUTHENTICATION_FAULT;
+		} catch (Exception e) {
+			response = Response.FAULT;
+		}
+
+		return response;
+	}
+}

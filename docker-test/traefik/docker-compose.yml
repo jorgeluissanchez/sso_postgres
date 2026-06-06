@@ -1,0 +1,23 @@
+version: '3'
+
+services:
+  traefik:
+    image: traefik
+    command:
+      - "--api.insecure=true"   # Habilita el dashboard de Traefik (no seguro)
+      - "--providers.docker=true"  # Habilita la detección de servicios Docker
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=app_network"
+    ports:
+      - "80:80"   # Puerto HTTP
+      - "8080:8080"   # Puerto del dashboard de Traefik
+      - "443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"   # Monta el socket de Docker
+    networks:
+      - traefik_network
+networks:
+  traefik_network:
+    external: true

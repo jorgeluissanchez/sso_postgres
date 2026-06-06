@@ -1,0 +1,51 @@
+spring:
+  application:
+     name: sso
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: apibee12@gmail.com
+    password: qsrajuecscxgkhsa
+    properties:
+      mail:
+        smtp:
+          auth: true
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+          starttls:
+            enable: true
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+  http:
+    multipart:
+      location:  /opt/tmp
+      max-file-size: 20Mb
+      max-request-size: 20Mb
+eureka:
+  client:
+    enabled: true
+    serviceUrl:
+      defaultZone: http://localhost:9761/eureka/
+  instance:
+    hostname: localhost
+    nonSecurePort: 9083
+    
+server:
+  port: 9083
+  
+rethinkdb.dbhost: localhost
+sso.rabbitmq.exchange: sso.exchange
+sso.rabbitmq.queue: sso.queue
+sso.rabbitmq.routingkey: sso.routingkey
+
+redis:
+  host: localhost
+  port: 6379
+
+username: ${username}
+fullname: ${fullname}
+

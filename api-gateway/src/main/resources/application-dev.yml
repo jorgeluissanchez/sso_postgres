@@ -1,0 +1,105 @@
+server:
+  port: 9080
+  max-http-header-size: 200000
+
+
+spring.mvc.dispatch-options-request: true
+management.context-path: /admin
+
+redis:
+  host: localhost
+  port: 6379
+
+spring:
+  application:
+     name: zuul
+  
+  boot:
+    admin:
+      client:
+        url:
+          http://localhost:8080
+  http:
+    multipart:
+      max-file-size: 20Mb
+      max-request-size: 20Mb
+
+eureka:
+  client:
+    enabled: true
+    serviceUrl:
+      defaultZone: http://localhost:9761/eureka/
+  instance:
+    hostname: localhost
+    nonSecurePort: 9080
+
+zuul:
+  forceOriginalQueryStringEncoding: true
+  
+  routes:
+    auth-center:
+      path: /login/**
+      url: http://localhost:9081/
+      sensitiveHeaders: Cookie,Set-Cookie
+      stripPrefix: false
+    google-login:
+      path: /googleLogin/**
+      url: http://localhost:9081/
+      sensitiveHeaders: Cookie,Set-Cookie
+      stripPrefix: false
+    token:
+      path: /token/**
+      url: http://localhost:9081/getToken
+      sensitiveHeaders: Cookie,Set-Cookie
+    getApiToken:
+      path: /getApiToken/**
+      url: http://localhost:9081/getApiToken
+      sensitiveHeaders: Cookie,Set-Cookie
+    users:
+      path: /getUsers/**
+      url: http://localhost:9083/getUsers
+      sensitiveHeaders: Cookie,Set-Cookie
+    activate-account:
+      path: /activateAccount/**
+      url: http://localhost:9083/activateAccount
+      sensitiveHeaders: Cookie,Set-Cookie
+    forgot-password:
+      path: /forgotPassword/**
+      url: http://localhost:9083/forgotPassword
+      sensitiveHeaders: Cookie,Set-Cookie
+    
+    app-service:
+      path: /app/**
+      url: http://localhost:9083/app/getApp
+      sensitiveHeaders: Cookie,Set-Cookie
+    ribbonbackend:
+      path: /ribbonbackend/**
+      serviceId: BACKEND
+  host:
+    socket-timeout-millis: 120000
+  semaphore:
+    max-semaphores: 2000
+
+
+shuaicj.security.jwt.secret: 4fc2beb0d2ce11ea87d00242ac130003
+
+# Max number of retries on the same server (excluding the first try)
+ribbon.maxAutoRetries: 2
+
+# Max number of next servers to retry (excluding the first server)
+ribbon.MaxAutoRetriesNextServer: 2
+
+# Connect timeout used by Apache HttpClient
+ribbon:
+  ConnectTimeout: 230000
+  ReadTimeout: 250000
+
+
+
+hystrix:
+  command:
+    default:
+      execution:
+        isolation:
+          thread:
+            timeoutInMilliseconds: 260000

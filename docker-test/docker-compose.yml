@@ -1,0 +1,18 @@
+version: '3.8'
+services:
+  tecnoprueba:
+    image: dynamic_query
+    environment:
+      APP_NAME: tecnoprueba
+      DB_DRIVER_NAME: org.postgresql.Driver
+      DB_HOST: postgres
+      DB_PORT: '5432'
+      DB_DATABASE: tecnoprueba
+      DB_USERNAME: sso
+      DB_PASSWORD: qwerty
+      PORT: 9099
+    networks:
+      - network_qwe4
+networks:
+  network_qwe4:
+    external: true

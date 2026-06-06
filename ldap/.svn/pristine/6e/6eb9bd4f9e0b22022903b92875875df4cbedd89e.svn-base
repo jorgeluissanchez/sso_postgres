@@ -1,0 +1,7 @@
+!--Variables de acceso al directorio activo de minminas-->
+ldap.url=ldap://ldap.minminas.gov.co
+ldap.base=DC=minminas,DC=gov,DC=co
+ldap.userDn=CN=Software GLP,OU=Aplicaciones,OU=Administracion,DC=minminas,DC=gov,DC=co
+ldap.password=ld4pGlp*
+ldap.base.schema=ou=Usuarios
+ldap.directoryString = sAMAccountName

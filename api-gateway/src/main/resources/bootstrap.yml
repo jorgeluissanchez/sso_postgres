@@ -1,0 +1,4 @@
+zuul.ignored-headers: Access-Control-Allow-Credentials, Access-Control-Allow-Origin
+
+spring.boot.admin.url: http://localhost:9084
+management.security.enabled: false

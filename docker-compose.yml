@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:latest
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: qwerty
+      POSTGRES_USER: sso
+      POSTGRES_DB: sso
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgresql.conf:/var/lib/postgresql/data/postgresql.conf
+      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
+    networks:
+      - mi_red
+  redis:
+    image: redis
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - mi_red
+  eureka:
+    build: ./eurekaserver
+    ports:
+      - "9761:9761"
+    networks:
+      - mi_red
+  api:
+    image: api
+    ports:
+      - "${PUERTO_ALEATORIO}:9080"
+    command: ["java","-jar", "-Ddatabase_engine=POSTGRES", "-Dcontext_name=mypostgres", "-Dfile.encoding=utf-8", "/app/api-gateway-1.0.0.jar"]
+    networks:
+      - mi_red
+  auth:
+    image: auth
+    command: ["java","-jar", "-Ddatabase_engine=POSTGRES", "-Dcontext_name=mypostgres", "-Dfile.encoding=utf-8", "/app/auth-center-1.0.0.jar"]
+    networks:
+      - mi_red
+  sso:
+    image: sso
+    command: ["java","-jar", "-Ddatabase_engine=POSTGRES", "-Dcontext_name=mypostgres", "-Dfile.encoding=utf-8", "/app/sso-service-1.0.0.jar"]
+    networks:
+      - mi_red
+  
+
+networks:
+  mi_red:
+volumes:
+  postgres_data:
