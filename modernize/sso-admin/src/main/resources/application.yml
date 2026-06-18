@@ -1,0 +1,105 @@
+server:
+  # Default to 8083 so it doesn't collide with the gateway (8080),
+  # auth-center (8081), or hello-service (8082). Override with PORT.
+  port: ${PORT:8083}
+  shutdown: graceful
+
+spring:
+  application:
+    name: sso-admin
+  main:
+    banner-mode: off
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/sso}
+    username: ${DB_USER:sso}
+    password: ${DB_PASSWORD:change-me-in-prod}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          time_zone: UTC
+
+  # SMTP. Dev defaults point at MailHog (started by docker compose).
+  # In production, override the host/port/credentials via env vars.
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${SMTP_AUTH:false}
+          starttls:
+            enable: ${SMTP_STARTTLS:false}
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+
+  # Freemarker for email templates. Templates live in
+  # src/main/resources/templates/*.ftl and render with the
+  # variables set by EmailService.
+  freemarker:
+    template-loader-path: classpath:/templates/
+    prefer-file-system-access: false
+    default-encoding: UTF-8
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+    healthcheck:
+      enabled: true
+  instance:
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: 10
+    lease-expiration-duration-in-seconds: 30
+
+sso:
+  jwt:
+    # MUST match auth-center's JWT_SECRET exactly — both sign
+    # (auth-center) and verify (sso-admin) with the same HMAC key.
+    secret: ${JWT_SECRET:change-me-change-me-change-me-change-me-change-me-1234567890}
+    issuer: sso-postgres
+    access-token-ttl-seconds: 3600
+    api-token-ttl-seconds: 86400
+    header-name: Authorization
+    token-prefix: "Bearer "
+  email:
+    # Branding + URLs for activation and restore-password emails.
+    # Override per environment.
+    from: ${SMTP_FROM:no-reply@example.com}
+    company: ${SSO_EMAIL_COMPANY:Example Inc.}
+    app-name: ${SSO_EMAIL_APP_NAME:SSO Modernizado}
+    logo-url: ${SSO_EMAIL_LOGO_URL:https://www.example.com/img/logo.png}
+    activation-url: ${SSO_ACTIVATION_URL:http://localhost:8080/sso-admin/activateAccount}
+    restore-url: ${SSO_RESTORE_URL:http://localhost:8080/sso-admin/activateAccount}
+    activation-template: activation-account.html
+    restore-template: restore-password-account.html
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+
+logging:
+  level:
+    root: INFO
+    com.co.eurekatic: INFO

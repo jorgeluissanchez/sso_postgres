@@ -1,0 +1,234 @@
+# =============================================================================
+# docker-compose.yml — full modernized SSO stack.
+#
+# Brings up the following services in dependency order:
+#
+#   postgres       — Postgres 16 with init scripts that create the
+#                    `sso` database and the legacy-compatible
+#                    `users` / `role` / `role_users` tables.
+#   eurekaserver   — Netflix Eureka on :8761 for service discovery.
+#   auth-center    — login + JWT issuance, talks to Postgres.
+#   api-gateway    — reactive Spring Cloud Gateway, validates JWTs
+#                    and injects X-Authenticated-* headers.
+#   hello-service  — reference downstream service, registers with
+#                    Eureka, reachable at /hello-service/** via the
+#                    gateway's dynamic route locator.
+#   sso-admin      — User/Role/Group CRUD + activation flow (Phase 1
+#                    of the sso-service port). Reachable at
+#                    /sso-admin/** through the gateway. Sends
+#                    activation and restore emails through MailHog.
+#   mailhog        — local SMTP server with a web UI for inspecting
+#                    the emails sso-admin sends. dev only.
+#
+# Usage:
+#   cp .env.example .env        # edit secrets
+#   docker compose build        # build all 4 service images
+#   docker compose up -d        # start the stack
+#   docker compose logs -f api-gateway
+#
+# Health check the stack:
+#   curl -fsS http://localhost:8761/actuator/health
+#   curl -fsS http://localhost:8081/actuator/health
+#   curl -fsS http://localhost:8080/actuator/health
+#
+#   # Get a JWT (admin / password from .env)
+#   TOKEN=$(curl -fsS -X POST http://localhost:8080/login \
+#     -H 'Content-Type: application/json' \
+#     -d '{"username":"admin","password":"ChangeMe-Now-Please-123!"}' | jq -r .token)
+#
+#   # Call hello-service through the gateway with the JWT
+#   curl -fsS http://localhost:8080/hello-service/api/hello \
+#     -H "Authorization: Bearer $TOKEN"
+# =============================================================================
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: sso-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Init scripts run once on first startup (the official
+      # postgres image runs /docker-entrypoint-initdb.d/*.sh
+      # before opening the cluster to the network).
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # pg_isready returns 0 when the cluster is accepting
+      # connections, 3 when starting up, 1 on error.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  eurekaserver:
+    build:
+      context: .
+      dockerfile: eurekaserver/Dockerfile
+    image: eurekatic/eurekaserver:1.0.0-SNAPSHOT
+    container_name: sso-eureka
+    restart: unless-stopped
+    ports:
+      - "${EUREKA_PORT:-8761}:8761"
+    environment:
+      # Standalone Eureka — does not register with itself.
+      EUREKA_CLIENT_REGISTER_WITH_EUREKA: "false"
+      EUREKA_CLIENT_FETCH_REGISTRY: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8761/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  auth-center:
+    build:
+      context: .
+      dockerfile: auth-center/Dockerfile
+    image: eurekatic/auth-center:1.0.0-SNAPSHOT
+    container_name: sso-auth-center
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eurekaserver:
+        condition: service_started
+    ports:
+      - "${AUTH_CENTER_PORT:-8081}:8081"
+    environment:
+      # Datasource — points at the `postgres` service on the
+      # compose network, not localhost.
+      DB_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      # Discovery
+      EUREKA_URL: "http://eurekaserver:8761/eureka"
+      # JWT
+      JWT_SECRET: ${JWT_SECRET}
+      # Bootstrap admin
+      SSO_BOOTSTRAP_ENABLED: ${SSO_BOOTSTRAP_ENABLED}
+      SSO_ADMIN_USERNAME: ${SSO_ADMIN_USERNAME}
+      SSO_ADMIN_PASSWORD: ${SSO_ADMIN_PASSWORD}
+      SSO_ADMIN_EMAIL: ${SSO_ADMIN_EMAIL}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8081/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
+    image: eurekatic/api-gateway:1.0.0-SNAPSHOT
+    container_name: sso-api-gateway
+    restart: unless-stopped
+    depends_on:
+      eurekaserver:
+        condition: service_started
+      auth-center:
+        condition: service_healthy
+    ports:
+      - "${API_GATEWAY_PORT:-8080}:8080"
+    environment:
+      # Must match auth-center's JWT_SECRET exactly — both sign
+      # and verify with the same HMAC key.
+      JWT_SECRET: ${JWT_SECRET}
+      EUREKA_URL: "http://eurekaserver:8761/eureka"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  hello-service:
+    build:
+      context: .
+      dockerfile: hello-service/Dockerfile
+    image: eurekatic/hello-service:1.0.0-SNAPSHOT
+    container_name: sso-hello-service
+    restart: unless-stopped
+    depends_on:
+      eurekaserver:
+        condition: service_started
+    ports:
+      - "${HELLO_SERVICE_PORT:-8082}:8082"
+    environment:
+      EUREKA_URL: "http://eurekaserver:8761/eureka"
+    # No healthcheck on the public port — the gateway's
+    # actuator/health is the canonical signal, and the service
+    # itself doesn't expose /actuator/health to the public.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8082/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  sso-admin:
+    build:
+      context: .
+      dockerfile: sso-admin/Dockerfile
+    image: eurekatic/sso-admin:1.0.0-SNAPSHOT
+    container_name: sso-admin
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eurekaserver:
+        condition: service_started
+    ports:
+      - "${SSO_ADMIN_PORT:-8083}:8083"
+    environment:
+      DB_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      EUREKA_URL: "http://eurekaserver:8761/eureka"
+      # MUST match auth-center's JWT_SECRET — same key signs and
+      # verifies tokens.
+      JWT_SECRET: ${JWT_SECRET}
+      # SMTP — in dev, point at the mailhog service.
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+      SMTP_FROM: ${SMTP_FROM}
+      SSO_EMAIL_COMPANY: ${SSO_EMAIL_COMPANY}
+      SSO_EMAIL_APP_NAME: ${SSO_EMAIL_APP_NAME}
+      SSO_EMAIL_LOGO_URL: ${SSO_EMAIL_LOGO_URL}
+      # Public URLs of the activation/restore links — these are
+      # what the user clicks in the email, so they must be the
+      # gateway address, not the sso-admin's internal one.
+      SSO_ACTIVATION_URL: "http://localhost:${API_GATEWAY_PORT:-8080}/sso-admin/activateAccount"
+      SSO_RESTORE_URL: "http://localhost:${API_GATEWAY_PORT:-8080}/sso-admin/restorePassword"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8083/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+
+  mailhog:
+    # Dev-only SMTP catcher. Web UI on http://localhost:8025
+    # shows every email sso-admin sends. Use SMTP_PORT=1025.
+    # In production, remove this service and point SMTP_HOST
+    # at the real mail relay.
+    image: mailhog/mailhog:latest
+    container_name: sso-mailhog
+    restart: unless-stopped
+    ports:
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"
+      - "${MAILHOG_WEB_PORT:-8025}:8025"
+
+volumes:
+  postgres-data:
+    # Named volume keeps the database across `docker compose down`
+    # but a `docker compose down -v` clears it (handy for dev).
+    name: sso-postgres-data

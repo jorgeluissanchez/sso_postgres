@@ -1,0 +1,17 @@
+# Build artifacts — Maven produces these inside each module, but we
+# don't want them baked into the build context (waste of bandwidth).
+**/target/
+**/.idea/
+**/*.iml
+**/.vscode/
+**/.DS_Store
+**/.git/
+**/.gitignore
+**/.mvn/
+
+# Docker / compose files themselves.
+**/Dockerfile
+**/docker-compose*.yml
+
+# Don't ship the postgres data dir if someone has run it locally.
+**/postgres-data/

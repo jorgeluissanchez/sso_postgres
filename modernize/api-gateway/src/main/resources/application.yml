@@ -1,0 +1,89 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: api-gateway
+  main:
+    banner-mode: off
+    web-application-type: reactive
+
+  cloud:
+    gateway:
+      # Static routes. The dynamic discovery locator (see
+      # DynamicRouteSupportConfig) auto-creates a route per service
+      # registered with Eureka, lowercased service id as the path.
+      # Static routes take precedence when ids collide.
+      routes:
+        - id: auth-center
+          uri: lb://auth-center
+          predicates:
+            - Path=/auth/**
+          filters:
+            - StripPrefix=1
+            - AddResponseHeader=X-Source, api-gateway
+        - id: auth-center-info
+          uri: lb://auth-center
+          predicates:
+            - Path=/login,/getToken,/getApiToken,/getInfoUser,/getUsersSSO,/googleLogin
+          filters:
+            - AddResponseHeader=X-Source, api-gateway
+        # sso-admin preserves the legacy `sso-service` URL surface
+        # (`/createAccount`, `/role/getRoles`, `/group`, etc.) so
+        # existing clients don't have to change. The gateway
+        # strips `/sso-admin` before forwarding.
+        - id: sso-admin
+          uri: lb://sso-admin
+          predicates:
+            - Path=/sso-admin/**
+          filters:
+            - StripPrefix=1
+            - AddResponseHeader=X-Source, api-gateway
+      # 404 for unmatched paths (deny-by-default). The reactive filter
+      # will translate this to a 401 for paths that need auth.
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_UNIQUE
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+          include-expression: "serviceId != 'api-gateway'"
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+    healthcheck:
+      enabled: true
+  instance:
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: 10
+    lease-expiration-duration-in-seconds: 30
+
+sso:
+  jwt:
+    secret: ${JWT_SECRET:change-me-change-me-change-me-change-me-change-me-1234567890}
+    issuer: sso-postgres
+    access-token-ttl-seconds: 3600
+    api-token-ttl-seconds: 86400
+    header-name: Authorization
+    token-prefix: "Bearer "
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+
+logging:
+  level:
+    root: INFO
+    com.co.eurekatic: INFO
+    org.springframework.cloud.gateway: INFO
+    reactor.netty: INFO

@@ -1,0 +1,78 @@
+server:
+  port: 8081
+  shutdown: graceful
+
+spring:
+  application:
+    name: auth-center
+  main:
+    banner-mode: off
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/sso}
+    username: ${DB_USER:sso}
+    password: ${DB_PASSWORD:change-me-in-prod}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          time_zone: UTC
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+    healthcheck:
+      enabled: true
+  instance:
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: 10
+    lease-expiration-duration-in-seconds: 30
+
+sso:
+  jwt:
+    # Production deployments MUST set JWT_SECRET. The default is a
+    # 64-byte placeholder; JwtTokenService refuses to start with a
+    # secret shorter than 32 bytes.
+    secret: ${JWT_SECRET:change-me-change-me-change-me-change-me-change-me-1234567890}
+    issuer: sso-postgres
+    access-token-ttl-seconds: 3600
+    api-token-ttl-seconds: 86400
+    header-name: Authorization
+    token-prefix: "Bearer "
+  bootstrap:
+    # Seeds a default admin user on first startup so the system is
+    # usable out of the box. Idempotent — skips if user already
+    # exists. Production deployments should set
+    # SSO_BOOTSTRAP_ENABLED=false and provision users via an admin
+    # endpoint or migration.
+    enabled: ${SSO_BOOTSTRAP_ENABLED:true}
+    admin-username: ${SSO_ADMIN_USERNAME:admin}
+    admin-password: ${SSO_ADMIN_PASSWORD:ChangeMe-Now-Please-123!}
+    admin-email: ${SSO_ADMIN_EMAIL:admin@example.com}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+
+logging:
+  level:
+    root: INFO
+    com.co.eurekatic: INFO
