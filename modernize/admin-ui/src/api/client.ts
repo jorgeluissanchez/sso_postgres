@@ -1,0 +1,174 @@
+import { env } from "@/env";
+import { RefreshLock } from "./refreshLock";
+import type { ErrorResponse, TokenResponse } from "./types";
+
+/**
+ * The HTTP client. Adds the Bearer header automatically, handles
+ * 401 by calling /auth/refresh (using the sso_refresh cookie the
+ * browser holds), and retries the original request once on a
+ * successful refresh. On refresh failure, dispatches an
+ * `auth:logout` CustomEvent so the AuthProvider can clear its
+ * state and the router can navigate to /login.
+ *
+ * Cookies are sent automatically because we never set custom
+ * credentials, and the browser carries the sso_refresh cookie on
+ * every same-origin request. In dev, the Vite proxy at
+ * http://localhost:5173 forwards /api/** to the gateway at
+ * :8080 — single origin from the browser's perspective.
+ */
+export class ApiClient {
+  private readonly refreshLock: RefreshLock;
+  private getAccessToken: () => string | null = () => null;
+  private onAuthFailure: () => void = () => {};
+
+  constructor() {
+    this.refreshLock = new RefreshLock(() => this.runRefresh());
+  }
+
+  /** Wired by AuthProvider once the in-memory token exists. */
+  setAccessTokenGetter(fn: () => string | null): void {
+    this.getAccessToken = fn;
+  }
+
+  /** Wired by AuthProvider. Called when refresh fails. */
+  setAuthFailureHandler(fn: () => void): void {
+    this.onAuthFailure = fn;
+  }
+
+  /**
+   * GET helper. Returns parsed JSON; throws {@link ApiError} on
+   * non-2xx. Pass `true` for {@code skipAuth} on the refresh
+   * endpoint itself, to avoid the recursive 401 loop.
+   */
+  async get<T>(path: string, init?: { skipAuth?: boolean }): Promise<T> {
+    return this.request<T>("GET", path, undefined, init);
+  }
+
+  async post<T>(path: string, body?: unknown, init?: { skipAuth?: boolean }): Promise<T> {
+    return this.request<T>("POST", path, body, init);
+  }
+
+  async put<T>(path: string, body?: unknown): Promise<T> {
+    return this.request<T>("PUT", path, body);
+  }
+
+  async delete<T>(path: string): Promise<T> {
+    return this.request<T>("DELETE", path, undefined);
+  }
+
+  /**
+   * Internal: a single request, with one transparent 401 -> refresh
+   * -> retry attempt. After that, the error bubbles up.
+   */
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    init?: { skipAuth?: boolean },
+  ): Promise<T> {
+    const resp = await this.fetchOnce(method, path, body, init?.skipAuth);
+    if (resp.status !== 401 || init?.skipAuth) {
+      return this.handleResponse<T>(resp);
+    }
+    // 401: try to refresh once. If it succeeds, retry the original.
+    const refreshed = await this.refreshLock.acquire();
+    if (!refreshed) {
+      this.onAuthFailure();
+      throw new ApiError(401, "AUTH_EXPIRED", "Session expired; please log in again");
+    }
+    const retried = await this.fetchOnce(method, path, body, init?.skipAuth);
+    return this.handleResponse<T>(retried);
+  }
+
+  private async fetchOnce(
+    method: string,
+    path: string,
+    body?: unknown,
+    skipAuth = false,
+  ): Promise<Response> {
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+    };
+    if (body !== undefined) {
+      headers["Content-Type"] = "application/json";
+    }
+    if (!skipAuth) {
+      const token = this.getAccessToken();
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+    }
+    // exactOptionalPropertyTypes rejects `body: undefined`; only
+    // attach the field when we have a real payload.
+    const init: RequestInit = {
+      method,
+      headers,
+      credentials: "same-origin",
+    };
+    if (body !== undefined) {
+      init.body = JSON.stringify(body);
+    }
+    return fetch(`${env.VITE_API_BASE}${path}`, init);
+  }
+
+  private async handleResponse<T>(resp: Response): Promise<T> {
+    if (resp.ok) {
+      // Some endpoints (delete, logout) return 204 with no body.
+      if (resp.status === 204) {
+        return undefined as T;
+      }
+      return (await resp.json()) as T;
+    }
+    let payload: ErrorResponse | null = null;
+    try {
+      payload = (await resp.json()) as ErrorResponse;
+    } catch {
+      // ignore: response wasn't JSON
+    }
+    throw new ApiError(
+      resp.status,
+      payload?.code ?? "HTTP_ERROR",
+      payload?.message ?? `${resp.status} ${resp.statusText}`,
+    );
+  }
+
+  /**
+   * Refreshes the access token. Sends the cookie; receives a new
+   * token + a rotated cookie. Updates the in-memory token via the
+   * AuthProvider's onTokenRefreshed callback. Returns true on success.
+   */
+  private async runRefresh(): Promise<boolean> {
+    try {
+      const resp = await fetch(`${env.VITE_API_BASE}/auth/refresh`, {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      if (!resp.ok) return false;
+      const body = (await resp.json()) as TokenResponse;
+      // The AuthProvider listens for this event and updates the
+      // in-memory token. We do it via CustomEvent rather than a
+      // direct callback so the circular import (client -> auth ->
+      // client) doesn't bite us.
+      window.dispatchEvent(
+        new CustomEvent("auth:token-refreshed", { detail: body.token }),
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+/** Singleton; wired up by AuthProvider on mount. */
+export const apiClient = new ApiClient();

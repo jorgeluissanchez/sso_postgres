@@ -1,0 +1,96 @@
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { AuthProvider } from "@/auth/AuthProvider";
+import { LoginPage } from "@/auth/LoginPage";
+
+/**
+ * Renders the LoginPage inside MemoryRouter + AuthProvider. The
+ * AuthProvider will fire a silent /api/auth/refresh on mount; we
+ * stub fetch to return 401 for that, so the user lands in
+ * "unauthenticated" and the form is interactive.
+ */
+function renderLogin(initialEntry = "/login") {
+  let result!: ReturnType<typeof render>;
+  act(() => {
+    result = render(
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/admin" element={<div data-testid="admin-landing">admin</div>} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+  });
+  return result;
+}
+
+describe("LoginPage", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("renders username, password and a submit button", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response("nope", { status: 401 })); // boot refresh
+    renderLogin();
+    expect(screen.getByLabelText(/Usuario/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Contraseña/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Entrar/i })).toBeInTheDocument();
+  });
+
+  it("submits credentials and navigates on success", async () => {
+    // boot refresh 401
+    fetchSpy.mockResolvedValueOnce(new Response("nope", { status: 401 }));
+    // login success
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ token: "t", refreshToken: "r", expiresIn: 600 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    renderLogin("/login");
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/Usuario/i), "admin");
+    await user.type(screen.getByLabelText(/Contraseña/i), "ChangeMe-Now-123");
+    await user.click(screen.getByRole("button", { name: /Entrar/i }));
+
+    expect(await screen.findByTestId("admin-landing")).toBeInTheDocument();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/auth/login",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("shows an error message on bad credentials", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response("nope", { status: 401 })); // boot
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: "BAD_CREDENTIALS", message: "Usuario o contraseña inválidos", timestamp: "" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    renderLogin();
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/Usuario/i), "admin");
+    await user.type(screen.getByLabelText(/Contraseña/i), "wrong");
+    await user.click(screen.getByRole("button", { name: /Entrar/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /Usuario o contraseña inválidos/i,
+    );
+  });
+});
