@@ -12,11 +12,12 @@ topology work end-to-end before the larger migration begins.
 |---|---|---|
 | `eurekaserver` | Spring Boot 3.5 + Spring Cloud Netflix Eureka | Service registry. Service-discovery for all 4 modules. |
 | `common` | Plain Java library | `User` and `Role` JPA entities, `UserRepository` / `RoleRepository`, `JwtTokenService` (jjwt 0.12.7), shared DTOs. |
-| `auth-center` | Spring Boot 3.5 servlet (Tomcat) | Login (`POST /login`), `GET /getToken`, `GET /getApiToken`, `GET /getInfoUser`, `GET /getUsersSSO`. Issues + validates JWTs. |
-| `api-gateway` | Spring Cloud Gateway 4 (WebFlux/Netty) | Validates JWTs, injects `X-Authenticated-*` headers, routes `/auth/**` and `/login` to auth-center, and auto-discovers downstream services from Eureka. |
+| `auth-center` | Spring Boot 3.5 servlet (Tomcat) | Login (`POST /login`), `GET /getToken`, `GET /getApiToken`, `GET /getInfoUser`, `GET /getUsersSSO`, `POST /auth/refresh`, `POST /auth/logout`. Issues + validates JWTs. Sets the `sso_refresh` httpOnly cookie on login. |
+| `api-gateway` | Spring Cloud Gateway 4 (WebFlux/Netty) | Validates JWTs, injects `X-Authenticated-*` headers, routes `/auth/**` and `/login` to auth-center, and auto-discovers downstream services from Eureka. Also serves the admin-ui SPA at `/admin/**`. |
 | `hello-service` | Spring Boot 3.5 reactive (WebFlux) | Reference downstream service. Exposes `/api/hello` and `/api/whoami`. Reachable via the gateway at `/hello-service/**`. |
+| `admin-ui` | Vite 5 + React 19 + TS strict + Tailwind | Admin SPA. Built into the api-gateway image (NOT a Maven module). Consumes the 26 sso-admin endpoints. |
 
-Versions: **Java 21**, **Spring Boot 3.5.3**, **Spring Cloud 2025.0.0 ("Northfields")**, **jjwt 0.12.7**.
+Versions: **Java 21**, **Spring Boot 3.5.3**, **Spring Cloud 2025.0.0 ("Northfields")**, **jjwt 0.12.7**, **Node 20** (for the SPA build).
 
 ## Architecture
 
@@ -207,6 +208,77 @@ public hostname.
 
 Anything not on this list returns **401** by the gateway's default-deny rule.
 
+## Admin UI (admin-ui/)
+
+A React 19 SPA that consumes all 26 sso-admin endpoints. Served by
+the api-gateway at `/admin/**` (single origin in production).
+
+- **Stack**: Vite 5, React 19, TypeScript 5.6 strict (with
+  `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`),
+  React Router v7, TanStack Query v5, TailwindCSS v3, Zod.
+- **Auth model**: access token in memory (never `localStorage`),
+  refresh in `httpOnly; SameSite=Strict; Path=/auth` cookie set
+  by `auth-center` on login. The SPA's `ApiClient` does a
+  single-flight `/auth/refresh` on a 401 and retries the original
+  request once.
+- **CSP**: strict `default-src 'self'` (no `'unsafe-inline'`, no
+  `'unsafe-eval'`), `frame-ancestors 'none'`, served via a meta
+  tag in `admin-ui/index.html`.
+- **CORS**: the api-gateway and auth-center read
+  `SSO_CORS_ALLOWED_ORIGINS` (comma-separated) and call
+  `setAllowedOrigins(...)` (real allowlist, never `*`) with
+  `setAllowCredentials(true)`. The default in dev is
+  `http://localhost:8080,http://localhost:5173`.
+
+### Run the SPA in dev
+
+```bash
+cd admin-ui
+npm ci                  # one-time
+npm run dev             # http://localhost:5173/admin/
+npm test                # vitest: 40 unit/integration tests
+npm run e2e             # playwright: requires gateway running on :8080
+```
+
+Vite proxies `/api/**` to `http://localhost:8080`, so the SPA sees
+a single origin (5173) even though the API lives on the gateway.
+Start the gateway first (`mvn -pl api-gateway spring-boot:run` or
+`docker compose up api-gateway`).
+
+### Build the SPA into the gateway image
+
+The `api-gateway` Dockerfile is multi-stage:
+
+1. `node-spa` (`node:20-alpine`) runs `npm ci && npm run build`.
+2. `java-build` (`maven:3.9-eclipse-temurin-21`) copies the SPA
+   `dist/` into `src/main/resources/static/admin/` **before**
+   `mvn package`, so the SPA files end up inside the fat jar.
+3. The runtime image (`eclipse-temurin:21-jre-jammy`) serves the
+   SPA at `/admin/**` via `AdminUiRouter.kt` (a
+   `RouterFunction<ServerResponse>` that handles static assets
+   and the SPA history-mode fallback to `index.html`).
+
+After `docker compose up -d --build`, the SPA is reachable at
+`http://localhost:8080/admin/`. Verified with:
+
+```bash
+curl -sI http://localhost:8080/admin/                         # 200 text/html
+curl -sI http://localhost:8080/admin/users                   # 200 text/html
+curl -sI http://localhost:8080/admin/assets/index-XXXXXXXX.js # 200 js
+```
+
+### Playwright E2E
+
+`admin-ui/e2e/auth.spec.ts` covers the happy path:
+
+1. Land on `/admin/`, expect redirect to `/login`.
+2. Submit credentials, expect `/admin/users` with the seeded admin row.
+3. Assert `localStorage` and `sessionStorage` are empty (token
+   stays in JS heap).
+4. Assert the `sso_refresh` cookie is `HttpOnly`.
+5. Click logout, expect `/login` again and the cookie wiped.
+6. Capture all console errors and assert no CSP violations.
+
 ### Headers propagated by the gateway to downstream services
 
 | Header | Value |
@@ -242,13 +314,17 @@ Anything not on this list returns **401** by the gateway's default-deny rule.
 ## Tests
 
 ```bash
-mvn test                              # all 6 modules, ~128 tests
+mvn test                              # all 6 backend modules, ~128 tests
 mvn -pl auth-center test              # 10 tests
 mvn -pl api-gateway test              # 11 tests
 mvn -pl hello-service test            # 7 tests
 mvn -pl common test                   # 11 tests
 mvn -pl eurekaserver test             # 1 test (context load)
 mvn -pl sso-admin test                # 95 tests (78 unit + 17 integration)
+
+# Frontend
+cd admin-ui && npm test               # vitest: 40 unit/integration tests
+cd admin-ui && npm run e2e            # playwright: requires gateway running
 ```
 
 `auth-center` and the JWT tests use **H2 in PostgreSQL compatibility mode** so the suite runs without a live Postgres. To exercise the real Postgres path, run with `--testcontainers` (or, in CI, the compose stack).
@@ -263,10 +339,11 @@ modernize/
 ├── .dockerignore
 ├── eurekaserver/                 # :8761 — Eureka server
 ├── common/                       # entities, repos, JWT service, DTOs
-├── auth-center/                  # :8081 — login + token issuance
-├── api-gateway/                  # :8080 — reactive gateway (WebFlux)
+├── auth-center/                  # :8081 — login + token issuance + /auth/refresh + /auth/logout
+├── api-gateway/                  # :8080 — reactive gateway (WebFlux) + serves admin-ui SPA at /admin/**
 ├── hello-service/                # :8082 — reference downstream service
 ├── sso-admin/                    # :8083 — User/Role/Group CRUD + activation (Phase 1) + Microservice/Endpoint/Route CRUD + bindings (Phase 2)
+├── admin-ui/                     # React 19 SPA — built into api-gateway image (NOT a Maven module)
 └── postgres/
     └── init/
         ├── 01-create-sso-db.sh                # base users / role / role_users
@@ -297,6 +374,7 @@ modernize/
 | 8 | ✅ | Dockerfiles + `docker-compose.yml` for the full stack |
 | 9 | ✅ | **Phase 1** of the `sso-service` port: `sso-admin` with User/Role/Group CRUD + activation + restore-password flow (55 tests) |
 | 10 | ✅ | **Phase 2** of the `sso-service` port: `sso-admin` with Microservice/Endpoint/Route CRUD + bindings (33 new tests, 95 total in sso-admin) |
+| 11 | ✅ | **Admin UI**: React 19 SPA at `admin-ui/` covering all 26 sso-admin endpoints. Served by api-gateway at `/admin/**`. 40 unit tests + 1 Playwright happy-path |
 
 ### `sso-service` migration plan (phased)
 

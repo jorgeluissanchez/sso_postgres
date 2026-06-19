@@ -44,5 +44,8 @@ export default defineConfig({
     environment: "happy-dom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    // e2e/ is Playwright's territory; vitest only owns src/.
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    exclude: ["node_modules", "dist", "e2e"],
   },
 });
