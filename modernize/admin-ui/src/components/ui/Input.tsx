@@ -8,8 +8,11 @@ import { forwardRef, useId, type InputHTMLAttributes } from "react";
  */
 export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
-  error?: string | null;
-  hint?: string;
+  // exactOptionalPropertyTypes: callers always pass `errors[key]`
+  // which is `string | undefined`. We accept undefined so the
+  // page code can splat the whole map without conditional spread.
+  error?: string | undefined;
+  hint?: string | undefined;
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
