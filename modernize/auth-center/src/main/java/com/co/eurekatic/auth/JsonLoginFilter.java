@@ -10,6 +10,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -90,12 +91,52 @@ public class JsonLoginFilter extends AbstractAuthenticationProcessingFilter {
         String accessToken = jwt.issueAccessToken(username, roles);
         String refreshToken = UUID.randomUUID().toString().replace("-", "");
 
+        // The refresh token is now ALSO delivered as an HttpOnly cookie so
+        // the admin SPA (and any future browser-based client) can call
+        // POST /auth/refresh without holding the refresh token in JS-
+        // accessible storage. SameSite=Strict blocks cross-site requests;
+        // HttpOnly blocks XSS exfiltration; Secure requires HTTPS in
+        // production. Path=/auth keeps the cookie scoped to the auth-center
+        // routes — we don't need to send it to /sso-admin or /hello-service.
+        //
+        // 30-day Max-Age matches the legacy refresh-token lifetime. The
+        // server-side expiry of the underlying refresh is enforced in
+        // RefreshController (the cookie's Max-Age is a browser-side hint,
+        // not the source of truth — see comment there).
+        response.addHeader(HttpHeaders.SET_COOKIE, buildRefreshCookie(refreshToken, request));
+
         response.setStatus(HttpServletResponse.SC_OK);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");
         mapper.writeValue(response.getOutputStream(), new TokenResponse(
                 accessToken, refreshToken, props.accessTokenTtlSeconds()));
     }
+
+    /**
+     * Builds the {@code Set-Cookie} header value for the refresh token.
+     * Kept package-private and static so the cookie shape is testable in
+     * isolation. {@code Secure} is omitted when the request comes in over
+     * plain HTTP (dev), added when the connection is TLS (prod). SameSite
+     * is always Strict because the SPA never needs cross-site auth.
+     */
+    static String buildRefreshCookie(String refreshToken, HttpServletRequest request) {
+        boolean secure = request.isSecure();
+        StringBuilder sb = new StringBuilder(128);
+        sb.append(REFRESH_COOKIE_NAME).append('=').append(refreshToken)
+          .append("; Path=").append(REFRESH_COOKIE_PATH)
+          .append("; Max-Age=").append(REFRESH_COOKIE_MAX_AGE)
+          .append("; HttpOnly")
+          .append("; SameSite=Strict");
+        if (secure) {
+            sb.append("; Secure");
+        }
+        return sb.toString();
+    }
+
+    static final String REFRESH_COOKIE_NAME = "sso_refresh";
+    static final String REFRESH_COOKIE_PATH = "/auth";
+    /** 30 days. Matches the legacy refresh-token lifetime. */
+    static final int REFRESH_COOKIE_MAX_AGE = 30 * 24 * 60 * 60;
 
     @Override
     protected void unsuccessfulAuthentication(HttpServletRequest request,

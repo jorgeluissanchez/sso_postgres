@@ -1,7 +1,9 @@
 package com.co.eurekatic.auth;
 
+import com.co.eurekatic.common.security.CorsProperties;
 import com.co.eurekatic.common.security.JwtTokenService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -35,6 +37,7 @@ import java.util.List;
  */
 @Configuration
 @EnableWebSecurity
+@EnableConfigurationProperties(CorsProperties.class)
 public class SecurityConfig {
 
     @Bean
@@ -44,6 +47,7 @@ public class SecurityConfig {
             JwtTokenService jwt,
             ObjectMapper objectMapper,
             com.co.eurekatic.common.security.JwtProperties jwtProperties,
+            CorsProperties corsProperties,
             JsonAuthHandlers handlers) throws Exception {
 
         JsonLoginFilter loginFilter = new JsonLoginFilter(
@@ -52,7 +56,7 @@ public class SecurityConfig {
 
         return http
                 .csrf(csrf -> csrf.disable())
-                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .cors(cors -> cors.configurationSource(corsConfigurationSource(corsProperties)))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .formLogin(form -> form.disable())
                 .httpBasic(basic -> basic.disable())
@@ -62,6 +66,11 @@ public class SecurityConfig {
                         .accessDeniedHandler(handlers.forbiddenHandler()))
                 .authorizeHttpRequests(a -> a
                         .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                        // /auth/refresh and /auth/logout are part of the cookie
+                        // auth flow. The refresh endpoint requires the cookie
+                        // but does NOT require a Bearer token in the header;
+                        // the cookie IS the credential. Logout is the same.
+                        .requestMatchers("/auth/refresh", "/auth/logout").permitAll()
                         .requestMatchers("/login").permitAll()
                         .requestMatchers("/getToken", "/getApiToken",
                                 "/getInfoUser", "/getUsersSSO", "/googleLogin").permitAll()
@@ -74,18 +83,21 @@ public class SecurityConfig {
     }
 
     /**
-     * CORS allowlist. Defaults to permissive in dev so curl + browsers
-     * work; in production set {@code sso.gateway.cors.allowed-origins}
-     * to a comma-separated list and have the gateway enforce it instead.
+     * CORS allowlist driven by {@link CorsProperties}. We use
+     * {@code setAllowedOrigins} (not {@code setAllowedOriginPatterns}) so
+     * the wildcard {@code "*"} is rejected at the CORS layer when
+     * {@code setAllowCredentials(true)} — exactly the spec behavior we
+     * want. Dev defaults are in {@link CorsProperties#defaults()};
+     * production sets a real allowlist via env var.
      */
     @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
+    public CorsConfigurationSource corsConfigurationSource(CorsProperties props) {
         CorsConfiguration cfg = new CorsConfiguration();
-        cfg.setAllowedOriginPatterns(List.of("*"));
+        cfg.setAllowedOrigins(props.allowedOrigins());
         cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         cfg.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
-        cfg.setExposedHeaders(List.of("Authorization"));
-        cfg.setAllowCredentials(false);
+        cfg.setExposedHeaders(List.of("Authorization", "Set-Cookie"));
+        cfg.setAllowCredentials(true);
         cfg.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

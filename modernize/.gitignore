@@ -34,3 +34,13 @@ logs/
 .env.local
 *.pem
 *.key
+
+# Node / Vite (admin-ui/)
+node_modules/
+dist/
+dist-ssr/
+coverage/
+.vite/
+.cache/
+playwright-report/
+test-results/

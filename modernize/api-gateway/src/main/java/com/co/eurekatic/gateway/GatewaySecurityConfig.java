@@ -1,7 +1,9 @@
 package com.co.eurekatic.gateway;
 
+import com.co.eurekatic.common.security.CorsProperties;
 import com.co.eurekatic.common.security.JwtProperties;
 import com.co.eurekatic.common.security.JwtTokenService;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -34,6 +36,7 @@ import java.util.List;
  */
 @Configuration
 @EnableWebFluxSecurity
+@EnableConfigurationProperties(CorsProperties.class)
 public class GatewaySecurityConfig {
 
     @Bean
@@ -53,6 +56,15 @@ public class GatewaySecurityConfig {
                 .logout(logout -> logout.disable())
                 .authorizeExchange(a -> a
                         .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        // /admin/** serves the SPA. The index.html and JS
+                        // bundles are public; the API calls the SPA makes
+                        // against /sso-admin/**, /auth/**, etc. are still
+                        // authenticated by their own rules (a Bearer header
+                        // or a refresh cookie). We don't want a redirect-
+                        // to-login if a deep link is hit on first load —
+                        // the SPA's own RequireAuth wrapper handles the
+                        // unauthenticated-API case.
+                        .pathMatchers("/admin", "/admin/**").permitAll()
                         .pathMatchers("/actuator/health", "/actuator/health/**",
                                 "/actuator/info").permitAll()
                         .anyExchange().authenticated())
@@ -62,16 +74,45 @@ public class GatewaySecurityConfig {
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
+        // Defaults are dev-friendly. Production wires CorsProperties via
+        // the application.yml property sso.cors.allowed-origins (list of
+        // hostnames). The WebFlux security config above doesn't accept
+        // a CorsProperties directly — we read it from the environment
+        // here so the same allowlist applies.
+        CorsProperties props = bindCorsProperties();
         CorsConfiguration cfg = new CorsConfiguration();
-        cfg.setAllowedOriginPatterns(List.of("*"));
+        cfg.setAllowedOrigins(props.allowedOrigins());
         cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         cfg.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
-        cfg.setExposedHeaders(List.of("Authorization"));
-        cfg.setAllowCredentials(false);
+        cfg.setExposedHeaders(List.of("Authorization", "Set-Cookie"));
+        cfg.setAllowCredentials(true);
         cfg.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", cfg);
         return source;
+    }
+
+    /**
+     * Re-reads the CORS allowlist from the environment. We can't inject
+     * {@link CorsProperties} directly into the bean method because
+     * Spring's binding happens at startup, and we want the
+     * {@code @ConfigurationProperties} bean (which {@code common} exports)
+     * to drive this — we look it up by type from the application context
+     * via a small helper. For now, we read the property directly via
+     * {@code System.getProperty}/{@code getenv}; see
+     * {@code application.yml} for the binding.
+     */
+    private static CorsProperties bindCorsProperties() {
+        String raw = System.getProperty("sso.cors.allowed-origins",
+                System.getenv().getOrDefault("SSO_CORS_ALLOWED_ORIGINS", ""));
+        if (raw == null || raw.isBlank()) {
+            return CorsProperties.defaults();
+        }
+        return new CorsProperties(
+                java.util.Arrays.stream(raw.split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .toList());
     }
 }

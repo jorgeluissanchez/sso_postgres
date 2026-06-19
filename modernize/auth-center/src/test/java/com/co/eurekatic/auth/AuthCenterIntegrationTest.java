@@ -181,7 +181,112 @@ class AuthCenterIntegrationTest {
         assertThat(body.get("error").asText()).isEqualTo("google_login_not_configured");
     }
 
+    /* ====================== cookie / refresh / logout ====================== */
+
+    @Test
+    void loginSetsRefreshCookieWithCorrectAttributes() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<String> response = rest.exchange(
+                url("/login"),
+                HttpMethod.POST,
+                new HttpEntity<>("{\"username\":\"alice\",\"password\":\"s3cret\"}", headers),
+                String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        String setCookie = response.getHeaders().getFirst(HttpHeaders.SET_COOKIE);
+        assertThat(setCookie).isNotNull();
+        // Cookie name + scope + flags are the security guarantees the SPA
+        // depends on. If any of these change, update the docs.
+        assertThat(setCookie).startsWith("sso_refresh=");
+        assertThat(setCookie).contains("Path=/auth");
+        assertThat(setCookie).contains("HttpOnly");
+        assertThat(setCookie).contains("SameSite=Strict");
+        assertThat(setCookie).contains("Max-Age=2592000"); // 30 days
+        // The test runs over plain HTTP — Secure must NOT be set,
+        // because if it were, the browser would never send the cookie
+        // back from a non-HTTPS dev environment.
+        assertThat(setCookie).doesNotContain("Secure");
+    }
+
+    @Test
+    void refreshWithoutCookieReturns401() {
+        HttpHeaders headers = new HttpHeaders();
+        ResponseEntity<String> response = rest.exchange(
+                url("/auth/refresh"),
+                HttpMethod.POST,
+                new HttpEntity<>(headers),
+                String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(response.getBody()).contains("no_refresh_cookie");
+    }
+
+    @Test
+    void refreshWithCookieReturnsNewAccessTokenAndRotatedCookie() throws Exception {
+        // First, log in to get a cookie.
+        HttpHeaders loginHeaders = new HttpHeaders();
+        loginHeaders.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<String> loginResp = rest.exchange(
+                url("/login"), HttpMethod.POST,
+                new HttpEntity<>("{\"username\":\"alice\",\"password\":\"s3cret\"}", loginHeaders),
+                String.class);
+        String initialCookie = loginResp.getHeaders().getFirst(HttpHeaders.SET_COOKIE);
+        assertThat(initialCookie).isNotNull();
+        String initialValue = extractCookieValue(initialCookie);
+        assertThat(initialValue).isNotBlank();
+
+        // Now call /auth/refresh carrying the cookie.
+        HttpHeaders refreshHeaders = new HttpHeaders();
+        refreshHeaders.add(HttpHeaders.COOKIE, "sso_refresh=" + initialValue);
+        ResponseEntity<String> refreshResp = rest.exchange(
+                url("/auth/refresh"), HttpMethod.POST,
+                new HttpEntity<>(refreshHeaders), String.class);
+
+        assertThat(refreshResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode body = mapper.readTree(refreshResp.getBody());
+        assertThat(body.get("token").asText()).isNotBlank();
+        assertThat(body.get("expiresIn").asLong()).isEqualTo(3600L);
+
+        // The Set-Cookie header is back with a NEW value (rotation).
+        String newCookie = refreshResp.getHeaders().getFirst(HttpHeaders.SET_COOKIE);
+        assertThat(newCookie).startsWith("sso_refresh=");
+        String newValue = extractCookieValue(newCookie);
+        assertThat(newValue).isNotBlank();
+        assertThat(newValue).isNotEqualTo(initialValue);
+    }
+
+    @Test
+    void logoutSetsCookieToMaxAgeZero() {
+        HttpHeaders headers = new HttpHeaders();
+        ResponseEntity<String> response = rest.exchange(
+                url("/auth/logout"),
+                HttpMethod.POST,
+                new HttpEntity<>(headers),
+                String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        String setCookie = response.getHeaders().getFirst(HttpHeaders.SET_COOKIE);
+        assertThat(setCookie).startsWith("sso_refresh=");
+        assertThat(setCookie).contains("Max-Age=0");
+        assertThat(setCookie).contains("Path=/auth");
+        assertThat(setCookie).contains("HttpOnly");
+        assertThat(setCookie).contains("SameSite=Strict");
+    }
+
     /* ====================== helpers ====================== */
+
+    /**
+     * Extracts the cookie value from a {@code Set-Cookie} header
+     * (everything between {@code =} and {@code ;}). Defensive against
+     * the various attribute orderings Spring may produce.
+     */
+    private static String extractCookieValue(String setCookie) {
+        int eq = setCookie.indexOf('=');
+        int semi = setCookie.indexOf(';');
+        if (semi < 0) semi = setCookie.length();
+        return setCookie.substring(eq + 1, semi);
+    }
 
     private String url(String path) {
         return "http://localhost:" + port + path;
