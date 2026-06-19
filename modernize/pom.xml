@@ -82,10 +82,22 @@
                 Declared here at the parent level so every child module
                 gets it without repeating itself.
             -->
+            <!--
+                Pinned to 3.13.0 because the version inherited from
+                spring-boot-starter-parent (3.1.x) is incompatible with
+                Java 21: it tries to open internal jdk.compiler modules
+                via reflection and fails with
+                "module jdk.compiler does not 'opens
+                com.sun.tools.javac.processing' to unnamed module".
+                3.13.0 supports the release flag (Java 21) and Lombok
+                annotation processing out of the box.
+            -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
                 <configuration>
+                    <release>${java.version}</release>
                     <annotationProcessorPaths>
                         <path>
                             <groupId>org.projectlombok</groupId>

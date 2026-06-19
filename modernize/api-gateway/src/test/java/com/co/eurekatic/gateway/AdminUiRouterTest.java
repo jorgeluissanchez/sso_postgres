@@ -67,14 +67,16 @@ class AdminUiRouterTest {
         // The SPA fallback would 404 in this test (no built dist),
         // but critically it is NOT 401. That means SecurityWebFilterChain
         // permits /admin/** and the RouterFunction gets a chance to run.
-        webTestClient().get().uri("/admin/users").exchange()
-                .expectStatus().isNotEqualTo(401);
+        int status = webTestClient().get().uri("/admin/users").exchange()
+                .returnResult(String.class).getStatus().value();
+        assertThat(status).isNotEqualTo(401);
     }
 
     @Test
     void adminRootIsNotRejectedBySecurity() {
-        webTestClient().get().uri("/admin/").exchange()
-                .expectStatus().isNotEqualTo(401);
+        int status = webTestClient().get().uri("/admin/").exchange()
+                .returnResult(String.class).getStatus().value();
+        assertThat(status).isNotEqualTo(401);
     }
 
     @Test
@@ -82,8 +84,9 @@ class AdminUiRouterTest {
         // /admin/assets/whatever.js — without a built SPA, the
         // resource doesn't exist; the router returns 404. The point
         // is the request reaches the router, not the security filter.
-        webTestClient().get().uri("/admin/assets/index-abc.js").exchange()
-                .expectStatus().isNotEqualTo(401);
+        int status = webTestClient().get().uri("/admin/assets/index-abc.js").exchange()
+                .returnResult(String.class).getStatus().value();
+        assertThat(status).isNotEqualTo(401);
     }
 
     @Test
