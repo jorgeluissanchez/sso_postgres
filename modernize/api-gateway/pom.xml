@@ -27,10 +27,21 @@
 
         <!-- Reactive web. Brings in Netty + WebFlux. Do NOT add
              spring-boot-starter-web to this module — the gateway must
-             use only the reactive stack. -->
+             use only the reactive stack.
+
+             Spring Cloud Gateway 5.0.x (the Boot 4 line) GA in Nov 2025
+             inside Spring Cloud 2025.1.x (Oakwood). The starter
+             `spring-cloud-starter-gateway` was retired in 2025.1 and
+             replaced by `spring-cloud-starter-gateway-server-webflux`
+             (the "server" suffix + "webflux" qualifier match the
+             servlet/reactive split in 5.0.x). The BOM
+             spring-cloud-dependencies 2025.1.2 pins
+             spring-cloud-gateway.version = 5.0.2 and
+             spring-boot.version = 4.0.7, so we let the BOM resolve
+             the version (no literal <version> tag). -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-gateway</artifactId>
+            <artifactId>spring-cloud-starter-gateway-server-webflux</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
