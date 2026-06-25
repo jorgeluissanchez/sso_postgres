@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.3</version>
+        <version>4.0.7</version>
         <relativePath/>
     </parent>
 
@@ -16,17 +16,24 @@
     <version>1.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>sso-parent</name>
-    <description>Modernized SSO architecture — Spring Boot 3.5 / Java 21 / Spring Cloud 2025.0.x</description>
+    <description>Modernized SSO architecture — Spring Boot 4.0 / Java 25 / Spring Cloud 2025.1.x (Oakwood)</description>
 
     <properties>
-        <java.version>21</java.version>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
-        <maven.compiler.release>21</maven.compiler.release>
+        <java.version>25</java.version>
+        <maven.compiler.source>25</maven.compiler.source>
+        <maven.compiler.target>25</maven.compiler.target>
+        <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
-        <spring-cloud.version>2025.0.0</spring-cloud.version>
+        <!--
+            Spring Cloud 2025.1.x ("Oakwood") is the release train
+            officially mapped to Spring Boot 4.0.x. 4.1.x is not yet
+            in any release train as of 2026-06. We pick the latest
+            2025.1.x patch (2025.1.2) which lines up with
+            spring-cloud-build 5.0.2 / spring-cloud-netflix 5.0.2.
+        -->
+        <spring-cloud.version>2025.1.2</spring-cloud.version>
 
         <jjwt.version>0.12.7</jjwt.version>
         <resilience4j.version>2.2.0</resilience4j.version>
@@ -81,21 +88,16 @@
                 spring-boot-starter-parent does not add it automatically.
                 Declared here at the parent level so every child module
                 gets it without repeating itself.
-            -->
-            <!--
-                Pinned to 3.13.0 because the version inherited from
-                spring-boot-starter-parent (3.1.x) is incompatible with
-                Java 21: it tries to open internal jdk.compiler modules
-                via reflection and fails with
-                "module jdk.compiler does not 'opens
-                com.sun.tools.javac.processing' to unnamed module".
-                3.13.0 supports the release flag (Java 21) and Lombok
-                annotation processing out of the box.
+
+                Note: the maven-compiler-plugin pin we used under
+                Spring Boot 3.5 (3.13.0) is no longer required under
+                Spring Boot 4.0 / Java 25 — the version inherited
+                from spring-boot-starter-parent is JDK 25-aware, so we
+                let it inherit and only configure annotationProcessorPaths.
             -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
                 <configuration>
                     <release>${java.version}</release>
                     <annotationProcessorPaths>
