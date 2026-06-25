@@ -15,6 +15,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
@@ -85,9 +86,10 @@ public class Microservice {
     /**
      * DB-managed timestamp. Never written from Java — the
      * schema defaults it to {@code now()} on insert.
+     * Postgres {@code TIMESTAMP} maps to {@link LocalDateTime}.
      */
     @Column(name = "CREATEDDATE", insertable = false, updatable = false)
-    private String createdDate;
+    private LocalDateTime createdDate;
 
     /**
      * Endpoints exposed by this microservice. The owning side

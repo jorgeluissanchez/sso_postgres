@@ -44,3 +44,11 @@ coverage/
 .cache/
 playwright-report/
 test-results/
+# TypeScript build artifacts (admin-ui)
+*.tsbuildinfo
+*.d.ts
+# Built SPA bundled into the gateway jar at dev time. The real
+# artifact is the admin-ui/dist/ output, NOT what's copied into the
+# gateway's classpath; serving from inside the jar is a debugging
+# fallback only.
+api-gateway/src/main/resources/static/admin/

@@ -32,10 +32,23 @@ eureka:
   client:
     service-url:
       defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+    # IMPORTANT: keep healthcheck DISABLED. When enabled, the Eureka
+    # client polls /actuator/health locally BEFORE each heartbeat and
+    # reports whatever the aggregator says. During the JPA / Tomcat /
+    # FreeMarker warm-up window the aggregator can transiently flip
+    # to DOWN, which Eureka then records as DOWN and refuses to
+    # route to. With this off, Eureka relies solely on the
+    # lease/heartbeat — a successful renew => UP, no renewal => DOWN.
     healthcheck:
-      enabled: true
+      enabled: false
   instance:
-    prefer-ip-address: true
+    # Use the container's hostname (set by Docker to the container
+    # ID like "6f598709a7dc") and let the gateway's `lb://auth-center`
+    # resolve via Docker's embedded DNS (127.0.0.11) to the bridge IP
+    # (172.18.0.x). Setting `prefer-ip-address: false` keeps Eureka
+    # from advertising a NIC IP that the gateway can't reach.
+    hostname: ${AUTH_CENTER_HOSTNAME:auth-center}
+    prefer-ip-address: false
     lease-renewal-interval-in-seconds: 10
     lease-expiration-duration-in-seconds: 30
 

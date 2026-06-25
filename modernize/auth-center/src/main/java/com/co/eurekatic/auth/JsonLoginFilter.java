@@ -134,7 +134,16 @@ public class JsonLoginFilter extends AbstractAuthenticationProcessingFilter {
     }
 
     static final String REFRESH_COOKIE_NAME = "sso_refresh";
-    static final String REFRESH_COOKIE_PATH = "/auth";
+    // Path is "/" (not "/auth") so the cookie is sent on both the
+    // legacy /auth/refresh path AND the gateway-mounted
+    // /api/auth/refresh path. The browser matches the cookie's path
+    // against the URL it actually requests, and from the browser's
+    // perspective the SPA's refresh call goes to /api/auth/refresh
+    // (the gateway's /api/** surface). HttpOnly + SameSite=Strict +
+    // the lack of a cross-site need keep the security posture
+    // intact; the path scoping was defense-in-depth that broke when
+    // the gateway added an /api prefix.
+    static final String REFRESH_COOKIE_PATH = "/";
     /** 30 days. Matches the legacy refresh-token lifetime. */
     static final int REFRESH_COOKIE_MAX_AGE = 30 * 24 * 60 * 60;
 

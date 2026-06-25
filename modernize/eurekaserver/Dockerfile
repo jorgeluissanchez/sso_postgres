@@ -24,6 +24,7 @@ COPY common/pom.xml common/
 COPY auth-center/pom.xml auth-center/
 COPY api-gateway/pom.xml api-gateway/
 COPY hello-service/pom.xml hello-service/
+COPY sso-admin/pom.xml sso-admin/
 
 # Pre-resolve dependencies (offline) so the actual build doesn't
 # re-download them on every source change. `-pl` restricts the

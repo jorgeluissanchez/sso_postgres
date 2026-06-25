@@ -28,6 +28,24 @@ public record CorsProperties(
         List<String> allowedOrigins
 ) {
     /**
+     * Override the record accessor so that an unset / null
+     * {@code sso.cors.allowed-origins} property resolves to the dev
+     * defaults instead of leaving the CORS allowlist empty. With
+     * {@code allowCredentials=true} an empty allowlist causes Spring's
+     * CORS processor to reject every Origin-bearing request with 403
+     * "Invalid CORS request", which broke the admin-ui login flow on
+     * the vite preview server (port 4173). The defaults here are
+     * dev-only — production MUST set the property explicitly via
+     * yml / env var (see {@link #defaults()}).
+     */
+    @Override
+    public List<String> allowedOrigins() {
+        return (allowedOrigins == null || allowedOrigins.isEmpty())
+                ? defaults().allowedOrigins()
+                : allowedOrigins;
+    }
+
+    /**
      * Default for local development: the Vite dev server and the
      * api-gateway origin. In production, set
      * {@code SSO_CORS_ALLOWED_ORIGINS} to a comma-separated list of the
@@ -35,7 +53,8 @@ public record CorsProperties(
      */
     public static CorsProperties defaults() {
         return new CorsProperties(List.of(
-                "http://localhost:5173",   // Vite dev server
+                "http://localhost:5173",   // Vite dev server (npm run dev)
+                "http://localhost:4173",   // Vite preview server (npm run preview)
                 "http://localhost:8080"    // api-gateway in single-origin prod
         ));
     }

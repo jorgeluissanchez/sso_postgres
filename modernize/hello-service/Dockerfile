@@ -11,6 +11,7 @@ COPY common/pom.xml common/
 COPY auth-center/pom.xml auth-center/
 COPY api-gateway/pom.xml api-gateway/
 COPY hello-service/pom.xml hello-service/
+COPY sso-admin/pom.xml sso-admin/
 
 RUN mvn -B -ntp -pl hello-service -am dependency:go-offline -q
 

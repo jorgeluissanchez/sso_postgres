@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1.7
+#
+# Local-only Dockerfile for api-gateway: composes a previously-built
+# jar (built on the host because Docker's memory cap kills the maven
+# stage on small colima VMs) with a freshly-built admin-ui dist (built
+# inside Docker where node is plentiful).
+#
+# Stage 1 (node-spa):  builds the SPA with Vite, stages dist/
+# Stage 2 (runtime):   eclipse-temurin:21-jre + the host-built jar +
+#                      the SPA dist copied into static/admin/
+
+FROM node:20-alpine AS node-spa
+WORKDIR /spa
+COPY admin-ui/package.json admin-ui/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY admin-ui/ ./
+RUN npm run build
+
+FROM eclipse-temurin:21-jre-jammy
+WORKDIR /app
+
+RUN groupadd --system --gid 1000 app && \
+    useradd  --system --uid 1000 --gid app --home /app app
+
+# The jar was built on the host. We don't use --from=maven because
+# the maven stage ran out of memory; see /tmp/build-gateway-verbose.sh
+# for the host build command. Build context is the parent (modernize/)
+# so the path is api-gateway/target/.
+COPY api-gateway/target/api-gateway.jar /app/app.jar
+# SPA dist baked into the classpath so AdminUiRouter can serve it.
+COPY --from=node-spa /spa/dist/ /app/static/admin/
+
+USER app
+EXPOSE 8080
+
+ENTRYPOINT ["java", \
+    "-XX:+UseContainerSupport", \
+    "-XX:MaxRAMPercentage=70", \
+    "-XX:+ExitOnOutOfMemoryError", \
+    "-Djava.security.egd=file:/dev/./urandom", \
+    "-jar", "/app/app.jar"]

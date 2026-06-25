@@ -11,6 +11,20 @@ spring:
 
   cloud:
     gateway:
+      # SCG's SimpleUrlHandlerMappingGlobalCorsAutoConfiguration binds
+      # `spring.cloud.gateway.server.webflux.globalcors` (or the legacy
+      # `spring.cloud.gateway.globalcors`) onto the reactive router's
+      # URL handler mapping. With no globalcors config, that binding is
+      # an empty map, and the router's CORS processor then rejects
+      # every Origin-bearing request with 403 "Invalid CORS request"
+      # BEFORE our CorsWebFilter (from the CorsConfigurationSource
+      # bean) can approve it. We own CORS via that bean, so turn the
+      # SCG-side handler off explicitly. (The default would also be
+      # `matchIfMissing=true`, so an absent property keeps the
+      # auto-config active — we have to set false here.)
+      # Flat dotted path: spring.cloud.gateway.server.webflux.globalcors
+      # .add-to-simple-url-handler-mapping = false
+      server.webflux.globalcors.add-to-simple-url-handler-mapping: false
       # Static routes. The dynamic discovery locator (see
       # DynamicRouteSupportConfig) auto-creates a route per service
       # registered with Eureka, lowercased service id as the path.
@@ -29,10 +43,89 @@ spring:
             - Path=/login,/getToken,/getApiToken,/getInfoUser,/getUsersSSO,/googleLogin
           filters:
             - AddResponseHeader=X-Source, api-gateway
+        # /api/** surface for the admin-ui SPA (VITE_API_BASE=/api).
+        # The SPA talks to /api/auth/** (login/logout/refresh) and
+        # /api/sso-admin/** (User/Role/Group/Microservice/Endpoint/Route
+        # CRUD). We strip only the /api prefix here; auth-center's own
+        # /auth/* prefix is preserved so RefreshController
+        # (@RequestMapping("/auth") + @PostMapping("/refresh") etc.)
+        # matches. The login endpoint is the one exception: it lives
+        # directly at /login (not /auth/login) because JsonLoginFilter
+        # is wired to AntPathRequestMatcher("/login"), so its route
+        # strips one extra segment.
+        - id: api-auth-login
+          uri: lb://auth-center
+          predicates:
+            - Path=/api/auth/login
+            - Method=POST
+          filters:
+            - StripPrefix=2
+            - AddResponseHeader=X-Source, api-gateway
+        - id: api-auth-cookie
+          uri: lb://auth-center
+          predicates:
+            - Path=/api/auth/refresh,/api/auth/logout
+          filters:
+            - StripPrefix=1
+            - AddResponseHeader=X-Source, api-gateway
+        - id: api-sso-admin
+          uri: lb://sso-admin
+          predicates:
+            - Path=/api/sso-admin/**
+          filters:
+            # StripPrefix=2 strips both /api AND /sso-admin because
+            # sso-admin's controllers live at /role, /microservice,
+            # /endpoint, /group, /route (no /sso-admin prefix), and
+            # UserController has no prefix at all (/getUsers,
+            # /createAccount, etc.). See the existing /sso-admin/**
+            # route below for the legacy /sso-admin surface.
+            - StripPrefix=2
+            - AddResponseHeader=X-Source, api-gateway
         # sso-admin preserves the legacy `sso-service` URL surface
-        # (`/createAccount`, `/role/getRoles`, `/group`, etc.) so
-        # existing clients don't have to change. The gateway
-        # strips `/sso-admin` before forwarding.
+        # so existing clients (and the SPA) don't have to change.
+        #
+        # sso-admin's controllers are mounted under different
+        # prefixes (`@RequestMapping("/role")`, `/microservice`,
+        # `/endpoint`, `/group`, `/route`) and one with NO prefix
+        # (UserController, with `/getUsers`, `/activateAccount`,
+        # `/forgotPassword`, ...). We mirror that here:
+        #
+        #   /sso-admin/role/**       -> sso-admin/role/**       (no strip)
+        #   /sso-admin/microservice/** -> sso-admin/microservice/**
+        #   /sso-admin/endpoint/**   -> sso-admin/endpoint/**
+        #   /sso-admin/group/**      -> sso-admin/group/**
+        #   /sso-admin/route/**      -> sso-admin/route/**
+        #   /sso-admin/**            -> sso-admin/{rest}        (StripPrefix=1, catches UserController)
+        - id: sso-admin-role
+          uri: lb://sso-admin
+          predicates:
+            - Path=/sso-admin/role/**
+          filters:
+            - AddResponseHeader=X-Source, api-gateway
+        - id: sso-admin-microservice
+          uri: lb://sso-admin
+          predicates:
+            - Path=/sso-admin/microservice/**
+          filters:
+            - AddResponseHeader=X-Source, api-gateway
+        - id: sso-admin-endpoint
+          uri: lb://sso-admin
+          predicates:
+            - Path=/sso-admin/endpoint/**
+          filters:
+            - AddResponseHeader=X-Source, api-gateway
+        - id: sso-admin-group
+          uri: lb://sso-admin
+          predicates:
+            - Path=/sso-admin/group/**
+          filters:
+            - AddResponseHeader=X-Source, api-gateway
+        - id: sso-admin-route
+          uri: lb://sso-admin
+          predicates:
+            - Path=/sso-admin/route/**
+          filters:
+            - AddResponseHeader=X-Source, api-gateway
         - id: sso-admin
           uri: lb://sso-admin
           predicates:
@@ -54,8 +147,19 @@ eureka:
   client:
     service-url:
       defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+    # healthcheck.enabled MUST be false here too: otherwise the
+    # gateway itself can transiently flip to DOWN during its own
+    # warm-up window, and clients (the SPA, scripts) get confusing
+    # gateway-down errors. Lease/heartbeat alone is the source of
+    # truth for "is this instance alive".
     healthcheck:
-      enabled: true
+      enabled: false
+    # The default 30s is too slow to recover from a restart. After
+    # a service (e.g. auth-center) comes back UP we want the
+    # gateway's ribbon cache to refresh fast so /login doesn't 503
+    # for a full minute. 5s is plenty for local dev and acceptable
+    # in prod (the registry delta payload is tiny).
+    registry-fetch-interval-seconds: 5
   instance:
     prefer-ip-address: true
     lease-renewal-interval-in-seconds: 10
