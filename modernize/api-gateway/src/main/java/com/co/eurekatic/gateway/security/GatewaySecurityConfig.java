@@ -1,4 +1,4 @@
-package com.co.eurekatic.gateway;
+package com.co.eurekatic.gateway.security;
 
 import com.co.eurekatic.common.security.CorsProperties;
 import com.co.eurekatic.common.security.JwtProperties;

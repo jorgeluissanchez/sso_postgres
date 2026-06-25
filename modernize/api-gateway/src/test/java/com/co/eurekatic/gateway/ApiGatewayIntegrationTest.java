@@ -2,6 +2,7 @@ package com.co.eurekatic.gateway;
 
 import com.co.eurekatic.common.security.JwtProperties;
 import com.co.eurekatic.common.security.JwtTokenService;
+import com.co.eurekatic.gateway.routing.UserForwardingGlobalFilter;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;

@@ -1,4 +1,4 @@
-package com.co.eurekatic.gateway;
+package com.co.eurekatic.gateway.routing;
 
 import com.co.eurekatic.common.security.AuthPrincipal;
 import com.co.eurekatic.common.security.JwtProperties;
