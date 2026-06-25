@@ -68,5 +68,25 @@
             <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+            Spring Boot 4 split the per-stack test auto-configure code
+            out of spring-boot-test-autoconfigure into dedicated jars:
+              - DataJpaTest       -> spring-boot-data-jpa-test
+              - TestEntityManager -> spring-boot-jpa-test
+            They are NOT pulled in by spring-boot-starter-test under
+            4.0.x and must be declared explicitly. The starter pulls
+            the rest (junit-jupiter, assertj, mockito, spring-boot-test,
+            spring-boot-test-autoconfigure) already.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-data-jpa-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-jpa-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>
