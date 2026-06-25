@@ -19,7 +19,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.web.authentication.AbstractAuthenticationProcessingFilter;
-import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 
 import java.io.IOException;
 import java.time.Instant;
@@ -50,7 +50,14 @@ public class JsonLoginFilter extends AbstractAuthenticationProcessingFilter {
                            JwtTokenService jwt,
                            ObjectMapper mapper,
                            JwtProperties props) {
-        super(new AntPathRequestMatcher("/login", HttpMethod.POST.name()));
+        // Spring Security 7 migration: AntPathRequestMatcher (from
+        // spring-security-web 6.x) was removed. The replacement is
+        // PathPatternRequestMatcher, built from Spring's PathPatternParser
+        // (the modern matcher used elsewhere in Spring 6/7). The factory
+        // pathPattern(HttpMethod, String) returns a RequestMatcher for the
+        // given path + HTTP method; AbstractAuthenticationProcessingFilter
+        // still takes a RequestMatcher, so this is a drop-in.
+        super(PathPatternRequestMatcher.pathPattern(HttpMethod.POST, "/login"));
         super.setAuthenticationManager(authenticationManager);
         this.jwt = jwt;
         this.mapper = mapper;

@@ -74,18 +74,30 @@
               - DataJpaTest       -> spring-boot-data-jpa-test
               - TestEntityManager -> spring-boot-jpa-test
             They are NOT pulled in by spring-boot-starter-test under
-            4.0.x and must be declared explicitly. The starter pulls
-            the rest (junit-jupiter, assertj, mockito, spring-boot-test,
-            spring-boot-test-autoconfigure) already.
+            4.0.x and must be declared explicitly with a version. The
+            starter pulls the rest (junit-jupiter, assertj, mockito,
+            spring-boot-test, spring-boot-test-autoconfigure) already.
+
+            NOTE: declaring these deps WITHOUT <version> in a
+            common/pom.xml that is installed into the local repo
+            makes the POM "invalid" and Maven silently drops the
+            transitive dependency resolution for downstream modules
+            that depend on `common`. Pinning the version here fixes
+            both the test compile and the downstream propagation.
+            Version MUST be a literal — Maven does not expand
+            ${spring-boot.version} (that's a plugin property, not
+            a project property) inside <version> elements.
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-data-jpa-test</artifactId>
+            <version>4.0.7</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-jpa-test</artifactId>
+            <version>4.0.7</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

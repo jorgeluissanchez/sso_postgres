@@ -28,12 +28,24 @@ public class AuthenticationConfig {
         return new BCryptPasswordEncoder(12);
     }
 
+    /**
+     * Spring Security 7 migration:
+     * <ul>
+     *   <li>The no-arg ctor {@code new DaoAuthenticationProvider()} was
+     *       removed in Security 7; the {@code setUserDetailsService(...)}
+     *       setter was removed at the same time.</li>
+     *   <li>The new contract is: the {@link UserDetailsService} is supplied
+     *       via the constructor; {@link PasswordEncoder} is supplied via
+     *       {@link DaoAuthenticationProvider#setPasswordEncoder} (still
+     *       available in 7.0.6 — see javap).</li>
+     * </ul>
+     * The rest of the wiring is unchanged.
+     */
     @Bean
     public DaoAuthenticationProvider daoAuthenticationProvider(
             UserDetailsService userDetailsService,
             PasswordEncoder passwordEncoder) {
-        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
-        provider.setUserDetailsService(userDetailsService);
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider(userDetailsService);
         provider.setPasswordEncoder(passwordEncoder);
         return provider;
     }
