@@ -38,7 +38,14 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    sourcemap: true,
+    // Sourcemaps are dev artifacts. Keeping them OFF in the
+    // production build saves ~1.3 MB in the api-gateway jar
+    // (the SPA's `dist/` is copied into the jar's resources
+    // before `mvn package`; sourcemaps would otherwise ship
+    // inside the fat jar with no consumer). For debugging
+    // production minified bundles, run a local dev server
+    // (`npm run dev`) and use the browser devtools there.
+    sourcemap: false,
     target: "es2022",
   },
   test: {
