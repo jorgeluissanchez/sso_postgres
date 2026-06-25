@@ -10,7 +10,7 @@
 #                       We `COPY` the SPA dist into the resources tree
 #                       before `package` so it ends up inside the jar.
 #
-# Stage 3 (runtime):   eclipse-temurin:21-jre + the fat jar.
+# Stage 3 (runtime):   eclipse-temurin:25-jre + the fat jar.
 
 # ----- stage 1: build the SPA -----
 FROM node:20-alpine AS node-spa
@@ -25,7 +25,7 @@ COPY admin-ui/ ./
 RUN npm run build
 
 # ----- stage 2: build the gateway jar -----
-FROM maven:3.9-eclipse-temurin-21 AS java-build
+FROM maven:3.9-eclipse-temurin-25 AS java-build
 WORKDIR /workspace
 
 COPY pom.xml ./
@@ -49,7 +49,7 @@ COPY --from=node-spa /spa/dist/ api-gateway/src/main/resources/static/admin/
 RUN mvn -B -ntp -pl api-gateway -am clean package -DskipTests -q
 
 # ----- stage 3: runtime -----
-FROM eclipse-temurin:21-jre-jammy
+FROM eclipse-temurin:25-jre
 WORKDIR /app
 
 RUN groupadd --system --gid 1000 app && \

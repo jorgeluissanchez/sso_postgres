@@ -6,7 +6,7 @@
 # inside Docker where node is plentiful).
 #
 # Stage 1 (node-spa):  builds the SPA with Vite, stages dist/
-# Stage 2 (runtime):   eclipse-temurin:21-jre + the host-built jar +
+# Stage 2 (runtime):   eclipse-temurin:25-jre + the host-built jar +
 #                      the SPA dist copied into static/admin/
 
 FROM node:20-alpine AS node-spa
@@ -16,7 +16,7 @@ RUN npm ci --no-audit --no-fund
 COPY admin-ui/ ./
 RUN npm run build
 
-FROM eclipse-temurin:21-jre-jammy
+FROM eclipse-temurin:25-jre
 WORKDIR /app
 
 RUN groupadd --system --gid 1000 app && \
