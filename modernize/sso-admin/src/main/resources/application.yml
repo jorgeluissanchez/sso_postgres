@@ -26,7 +26,10 @@ spring:
     open-in-view: false
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
+        # hibernate.dialect is auto-detected from the JDBC connection
+        # in Hibernate 7 (the version pulled in by Spring Boot 4). Setting
+        # it explicitly triggers HHH90000025. We keep the rest of the
+        # JDBC properties here unchanged.
         jdbc:
           time_zone: UTC
 
@@ -70,8 +73,21 @@ eureka:
       enabled: false
   instance:
     # See auth-center for rationale.
-    hostname: ${SSO_ADMIN_HOSTNAME:sso-admin}
-    prefer-ip-address: false
+    hostname: ${SSO_ADMIN_HOSTNAME:}
+    # prefer-ip-address MUST be true in Spring Cloud Netflix 5.x
+    # (the client bundled with Spring Cloud 2025.1 / Boot 4). The
+    # load balancer in the api-gateway does a Netty DNS lookup of
+    # `hostName` first and only falls back to ipAddr if the lookup
+    # fails; with `prefer-ip-address: false` and `hostName` set to
+    # a non-resolvable name like `sso-admin`, every forwarded
+    # request through `lb://sso-admin` fails with 500
+    # "Failed to resolve 'sso-admin'". Setting this to true makes
+    # the registration carry ipAddr as the URL the load-balancer
+    # reaches, which is what we want for container/local dev.
+    # We also clear `hostname` (no SSO_ADMIN_HOSTNAME env override)
+    # so Spring Cloud Netflix falls back to the resolved IP rather
+    # than a name Netty can't resolve.
+    prefer-ip-address: true
     lease-renewal-interval-in-seconds: 10
     lease-expiration-duration-in-seconds: 30
 

@@ -3,8 +3,8 @@ package com.co.eurekatic.ssoadmin;
 import com.co.eurekatic.common.security.JwtProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.persistence.autoconfigure.EntityScan;
 import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
@@ -24,6 +24,14 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
  * {@code ComponentScan}, {@code EntityScan}, and
  * {@code EnableJpaRepositories} all have to point at the right
  * packages explicitly — same pattern as auth-center.
+ *
+ * <p><b>Spring Boot 4 migration:</b> {@code EntityScan} moved
+ * from {@code org.springframework.boot.autoconfigure.domain} to
+ * {@code org.springframework.boot.persistence.autoconfigure}
+ * (Boot 4's per-stack split moved JPA-adjacent code out of the
+ * monolithic {@code spring-boot-autoconfigure} jar into
+ * {@code spring-boot-persistence}). The annotation itself is
+ * unchanged.
  */
 @SpringBootApplication
 @EnableDiscoveryClient
