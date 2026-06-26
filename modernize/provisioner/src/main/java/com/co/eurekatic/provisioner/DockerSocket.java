@@ -121,9 +121,13 @@ public class DockerSocket {
     }
 
     /**
-     * {@code GET /v1.43/containers/{name}/json}. Returns
-     * the Docker state string ({@code running}, {@code exited},
-     * etc.) or null if the container doesn't exist.
+     * {@code GET /v1.43/containers/{name}/json}. Returns the
+     * Docker state string ({@code running}, {@code exited}, etc.)
+     * or the synthetic {@code "absent"} when the container
+     * doesn't exist. Callers (admin-ui) want 200-with-absent,
+     * not 404 — a missing container is a normal operational
+     * state ("just been deleted", "provisioning race"), not a
+     * transport failure.
      */
     public String status(String fullInstanceName) {
         try {
@@ -131,7 +135,44 @@ public class DockerSocket {
                     "curl", "-sS",
                     "--unix-socket", props.getSocketPath(),
                     "http://localhost/v1.43/containers/" + fullInstanceName + "/json"));
-            return resp.path("State").path("Status").asText(null);
+            JsonNode state = resp.path("State");
+            // Inspect.State.Status is the human-readable state
+            // ("running", "exited", ...). It can be absent when
+            // the image has no entrypoint — fall back to "" so
+            // callers can render an UNKNOWN badge instead of
+            // crashing.
+            return state.path("Status").asText("");
+        } catch (DockerException e) {
+            if (e.getMessage().contains("404")) {
+                return "absent";
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Companion to {@link #status(String)} — pulls the
+     * {@code State.StartedAt} timestamp and the raw container
+     * id from the same Docker inspect response. Returns null
+     * when the container is absent. We use the same curl call
+     * as {@code status} to avoid a second round-trip.
+     */
+    public StartedAtInfo inspectStartedAt(String fullInstanceName) {
+        try {
+            JsonNode resp = exec(List.of(
+                    "curl", "-sS",
+                    "--unix-socket", props.getSocketPath(),
+                    "http://localhost/v1.43/containers/" + fullInstanceName + "/json"));
+            String containerId = resp.path("Id").asText(null);
+            String startedAt = resp.path("State").path("StartedAt").asText(null);
+            // Docker returns "0001-01-01T00:00:00Z" for a
+            // container that has never been started (e.g. still
+            // "created"). Normalize to null so the UI renders
+            // "—" instead of the epoch.
+            if (startedAt != null && startedAt.startsWith("0001-01-01")) {
+                startedAt = null;
+            }
+            return new StartedAtInfo(containerId, startedAt);
         } catch (DockerException e) {
             if (e.getMessage().contains("404")) {
                 return null;
@@ -139,6 +180,124 @@ public class DockerSocket {
             throw e;
         }
     }
+
+    /**
+     * {@code GET /v1.43/containers/{name}/logs?stdout=true&stderr=true&tail=N}.
+     *
+     * <p>Docker's logs endpoint returns a STREAM multiplexed
+     * binary payload — each frame has an 8-byte header
+     * (1 byte type + 3 bytes padding + 4 bytes size BE). For
+     * plain-text logs (the only thing query-service emits) we
+     * skip the headers and concatenate the UTF-8 payload. This
+     * is correct for ASCII / UTF-8 logs; binary payloads in
+     * stdout (e.g. file uploads) would need a proper demuxer.
+     * Spring Boot's default console output is text, so the
+     * simplification holds for our use case.
+     *
+     * <p>Returns an empty string when the container has not
+     * produced any output yet.
+     */
+    public String logs(String fullInstanceName, int tail) {
+        // Cap tail at Docker's documented max (the API allows
+        // "all" but operators should not request the full
+        // log over the wire). 100k is arbitrary but generous.
+        int effectiveTail = Math.max(1, Math.min(tail, 100_000));
+        // curl --output - streams to stdout. We use
+        // --no-buffer to keep the frames in order; otherwise
+        // curl might reorder them as it writes.
+        Process p;
+        try {
+            p = new ProcessBuilder(
+                    "curl", "-sS", "--no-buffer",
+                    "--unix-socket", props.getSocketPath(),
+                    "http://localhost/v1.43/containers/" + fullInstanceName
+                            + "/logs?stdout=true&stderr=true&tail="
+                            + effectiveTail)
+                    .redirectErrorStream(true)
+                    .start();
+        } catch (IOException e) {
+            throw new DockerException("curl spawn failed for logs: " + e.getMessage(), e);
+        }
+        StringBuilder sb = new StringBuilder();
+        try (java.io.InputStream in = p.getInputStream()) {
+            byte[] header = new byte[8];
+            byte[] chunk = new byte[8192];
+            int n;
+            while ((n = in.read(header)) != -1) {
+                if (n < 8) {
+                    // partial header at EOF — Docker sometimes
+                    // sends a short frame for the last line
+                    break;
+                }
+                // header[0] is the stream type (0=stdin,
+                // 1=stdout, 2=stderr). We accept any.
+                int size = ((header[4] & 0xff) << 24)
+                        | ((header[5] & 0xff) << 16)
+                        | ((header[6] & 0xff) << 8)
+                        | (header[7] & 0xff);
+                int remaining = size;
+                while (remaining > 0) {
+                    int toRead = Math.min(remaining, chunk.length);
+                    int read = in.read(chunk, 0, toRead);
+                    if (read < 0) break;
+                    sb.append(new String(chunk, 0, read, StandardCharsets.UTF_8));
+                    remaining -= read;
+                }
+            }
+        } catch (IOException e) {
+            throw new DockerException("read logs failed: " + e.getMessage(), e);
+        }
+        try {
+            if (!p.waitFor(15, TimeUnit.SECONDS)) {
+                p.destroyForcibly();
+                throw new DockerException("curl timed out on logs: " + fullInstanceName);
+            }
+            int exit = p.exitValue();
+            if (exit != 0) {
+                // 404 → no logs yet. Return empty string; the
+                // UI distinguishes this from "container absent"
+                // via the separate status endpoint.
+                // The output is already consumed at this point,
+                // so we can't include it in the message body —
+                // log it for debugging.
+                log.debug("curl logs exited {} for {}", exit, fullInstanceName);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DockerException("logs interrupted", e);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * {@code POST /v1.43/containers/{name}/restart?t=10}.
+     * The {@code t} parameter is the grace period (seconds)
+     * before SIGKILL. Returns true on success, false when
+     * the container is missing (the UI shows the missing
+     * state and the operator can re-create from the page).
+     */
+    public boolean restart(String fullInstanceName) {
+        try {
+            exec(List.of(
+                    "curl", "-sS", "-X", "POST",
+                    "--unix-socket", props.getSocketPath(),
+                    "http://localhost/v1.43/containers/" + fullInstanceName + "/restart?t=10"));
+            return true;
+        } catch (DockerException e) {
+            if (e.getMessage().contains("404")) {
+                return false;
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Container id + RFC 3339 {@code StartedAt} timestamp
+     * returned by {@link #inspectStartedAt(String)}. Both
+     * fields can be null (the inspect payload doesn't always
+     * include them).
+     */
+    public record StartedAtInfo(String containerId, String startedAt) {}
 
     private List<String> buildEnv(ProvisionRequest req) {
         // The instance id (e.g. query-service-oracle-dev) is
