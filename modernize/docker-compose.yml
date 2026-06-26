@@ -20,8 +20,19 @@
 #                    of the sso-service port). Reachable at
 #                    /sso-admin/** through the gateway. Sends
 #                    activation and restore emails through MailHog.
+#                    For microservice rows with kind=QUERY it
+#                    calls the provisioner sidecar to spin up
+#                    a fresh query-service container.
 #   mailhog        — local SMTP server with a web UI for inspecting
 #                    the emails sso-admin sends. dev only.
+#   provisioner    — Docker sidecar. The ONLY container with
+#                    /var/run/docker.sock mounted. sso-admin
+#                    POSTs to http://provisioner:9000/provision
+#                    when an admin creates a kind=QUERY row; the
+#                    sidecar translates that into a Docker Engine
+#                    API call that starts a new query-service
+#                    container on the compose network. Not
+#                    reachable from the host — internal-only.
 #
 # Usage:
 #   cp .env.example .env        # edit secrets
@@ -209,6 +220,13 @@ services:
         condition: service_healthy
       eurekaserver:
         condition: service_started
+      provisioner:
+        # sso-admin's create(kind=QUERY) blocks until the
+        # provisioner round-trip + Eureka registration
+        # complete, so the sidecar must be UP before the
+        # admin service starts accepting writes — otherwise
+        # the first QUERY row would 503.
+        condition: service_healthy
     ports:
       - "${SSO_ADMIN_PORT:-8083}:8083"
     environment:
@@ -219,6 +237,11 @@ services:
       # MUST match auth-center's JWT_SECRET — same key signs and
       # verifies tokens.
       JWT_SECRET: ${JWT_SECRET}
+      # Provisioner sidecar — sso-admin POSTs here when an
+      # admin creates a microservice row with kind=QUERY.
+      # The base URL is compose-DNS, NOT localhost, because
+      # sso-admin is itself a container.
+      SSO_PROVISIONER_BASE_URL: "http://provisioner:9000"
       # SMTP — in dev, point at the mailhog service.
       SMTP_HOST: mailhog
       SMTP_PORT: "1025"
@@ -358,6 +381,78 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
+
+  # ===========================================================================
+  # provisioner — Docker sidecar that sso-admin calls to spin up
+  # query-service containers on demand. The ONLY service in the
+  # stack that has /var/run/docker.sock bind-mounted. sso-admin
+  # talks to it over HTTP at http://provisioner:9000/provision
+  # — it never touches the socket itself.
+  # ===========================================================================
+  # The new query-service containers that this service starts
+  # join the compose network by name (DockerSocket sets
+  # HostConfig.NetworkMode = docker.network, default
+  # "sso_postgres_modernize_default"). That way they can
+  # resolve `eurekaserver`, `postgres`, `sso-api-gateway` by
+  # service-name DNS. We deliberately do NOT use
+  # network_mode: host on the provisioner itself — staying on
+  # the compose network is what lets the spawned containers
+  # see the rest of the stack.
+  provisioner:
+    build:
+      context: .
+      dockerfile: provisioner/Dockerfile
+    image: eurekatic/provisioner:1.0.0-SNAPSHOT
+    container_name: sso-provisioner
+    restart: unless-stopped
+    mem_limit: 384m
+    mem_reservation: 256m
+    # PRIVILEGE BOUNDARY: the docker socket is the only path
+    # in the stack that can create containers, so it lives
+    # here and ONLY here. Anyone who can talk to the
+    # provisioner can spawn containers, so its port is
+    # internal (no `ports:` mapping to the host).
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    # The provisioner image ships with a non-root `app` user
+    # (uid 1000). On Linux with a standard docker setup the
+    # socket is `root:docker` mode 0660 and you'd add the
+    # `app` user to the docker group with
+    # `group_add: ["docker"]` instead. On colima (and Docker
+    # Desktop) the socket belongs to the host user with mode
+    # 0600, so the simplest correct option is to run this
+    # single container as root and let the rest of the stack
+    # keep its non-root posture. PRODUCTION: replace with
+    # `group_add: ["<docker-group-gid>"]` and keep
+    # `user: "1000:1000"`.
+    user: "0:0"
+    environment:
+      # Network the new containers join — must match the
+      # compose default network (or the operator's custom
+      # network name) so DNS resolution of eurekaserver,
+      # postgres, etc. works inside the new container.
+      DOCKER_NETWORK: sso_postgres_modernize_default
+      # Image name the new containers are started from.
+      DOCKER_IMAGE: eurekatic/query-service:1.0.0-SNAPSHOT
+      # Service-name DNS for Eureka. The query-service
+      # image uses this exact URL to register its
+      # heartbeat.
+      DOCKER_EUREKA_URL: "http://eurekaserver:8761/eureka"
+      # JWT_SECRET — passed to the new query-service
+      # container as JWT_SECRET env var. Must match the
+      # secret auth-center uses to sign tokens.
+      DOCKER_JWT_SECRET: ${JWT_SECRET}
+    healthcheck:
+      # The provisioner image installs curl (it talks to
+      # the Docker socket via curl --unix-socket) but not
+      # wget, so the healthcheck uses curl. The
+      # /actuator/health endpoint comes free from the
+      # actuator starter.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
 volumes:
   postgres-data:

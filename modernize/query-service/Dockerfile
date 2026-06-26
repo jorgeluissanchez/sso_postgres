@@ -1,6 +1,12 @@
 # syntax=docker/dockerfile:1.7
 #
 # Multi-stage Dockerfile for the query-service module.
+#
+# We COPY every module's pom.xml because the parent pom lists
+# all of them in <modules>; `mvn -pl query-service -am` then
+# resolves only query-service's actual deps (common) and leaves
+# the others alone. Without those COPY lines the offline step
+# fails with "Child module ... does not exist".
 
 FROM maven:3.9-eclipse-temurin-25 AS build
 WORKDIR /workspace
@@ -13,6 +19,7 @@ COPY api-gateway/pom.xml api-gateway/
 COPY hello-service/pom.xml hello-service/
 COPY sso-admin/pom.xml sso-admin/
 COPY query-service/pom.xml query-service/
+COPY provisioner/pom.xml provisioner/
 
 RUN mvn -B -ntp -pl query-service -am dependency:go-offline -q
 

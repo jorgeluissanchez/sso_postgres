@@ -1,5 +1,6 @@
 package com.co.eurekatic.ssoadmin.exception;
 
+import com.co.eurekatic.ssoadmin.provisioner.ProvisioningException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -54,6 +55,42 @@ public class GlobalExceptionHandler {
                 .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
                 .collect(Collectors.joining("; "));
         return error(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_FAILED", details);
+    }
+
+    /**
+     * Translates {@link ProvisioningException} into the
+     * matching HTTP status. The {@link ProvisioningException.Code}
+     * carries enough context to map correctly:
+     *
+     * <ul>
+     *   <li>{@code SIDECAR_UNREACHABLE} → 503 (transient — the
+     *       operator should retry once the sidecar comes back).</li>
+     *   <li>{@code EUREKA_TIMEOUT} → 504 (the container is up but
+     *       didn't register in time — gateway can't route yet).</li>
+     *   <li>{@code CONTAINER_CREATE_FAILED} → 502 (the sidecar
+     *       or Docker rejected the create — usually a config issue).</li>
+     *   <li>{@code INVALID_SPEC} → 400 (caller-side — missing
+     *       JDBC URL, bad dialect, etc.).</li>
+     * </ul>
+     */
+    @ExceptionHandler(ProvisioningException.class)
+    public ResponseEntity<Map<String, Object>> handleProvisioning(ProvisioningException ex) {
+        HttpStatus status = switch (ex.getCode()) {
+            case SIDECAR_UNREACHABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+            case EUREKA_TIMEOUT      -> HttpStatus.GATEWAY_TIMEOUT;
+            case CONTAINER_CREATE_FAILED -> HttpStatus.BAD_GATEWAY;
+            case INVALID_SPEC        -> HttpStatus.BAD_REQUEST;
+        };
+        return error(status, ex.getCode().name(), ex.getMessage());
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, Object>> handleIllegalArg(IllegalArgumentException ex) {
+        // Used for cross-field validation errors raised from
+        // MicroserviceService when kind=QUERY but a required
+        // JDBC field is missing — Bean Validation can't model
+        // that "if-then" rule on records cleanly.
+        return error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", ex.getMessage());
     }
 
     @ExceptionHandler(Exception.class)

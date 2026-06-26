@@ -15,6 +15,11 @@ import java.util.Optional;
  * {@code getMicroservice?serviceId=…} endpoint) and an
  * existence check used for duplicate-rejection in
  * {@code createMicroservice}.
+ *
+ * <p>{@code findByInstanceName} / {@code existsByInstanceName}
+ * drive the QUERY-kind provisioner flow — instance names are
+ * optional and only QUERY rows have them, so the DB partial
+ * index keeps both lookups fast even when the table grows.
  */
 @Repository
 public interface MicroserviceRepository extends JpaRepository<Microservice, Long> {
@@ -22,4 +27,8 @@ public interface MicroserviceRepository extends JpaRepository<Microservice, Long
     Optional<Microservice> findByServiceId(String serviceId);
 
     boolean existsByServiceId(String serviceId);
+
+    Optional<Microservice> findByInstanceName(String instanceName);
+
+    boolean existsByInstanceName(String instanceName);
 }

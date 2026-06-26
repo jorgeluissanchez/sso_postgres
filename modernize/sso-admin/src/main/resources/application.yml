@@ -101,6 +101,13 @@ sso:
     api-token-ttl-seconds: 86400
     header-name: Authorization
     token-prefix: "Bearer "
+  # Provisioner sidecar. sso-admin POSTs here when a
+  # microservice row with kind=QUERY is created. The default
+  # points at the compose-DNS name `provisioner:9000`; for
+  # local dev outside compose, override with
+  # SSO_PROVISIONER_BASE_URL=http://localhost:9000.
+  provisioner:
+    base-url: ${SSO_PROVISIONER_BASE_URL:http://provisioner:9000}
   email:
     # Branding + URLs for activation and restore-password emails.
     # Override per environment.

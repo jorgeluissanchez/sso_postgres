@@ -99,6 +99,8 @@ export interface GroupRequest {
 
 // ====================== sso-admin / microservice ======================
 
+export type MicroserviceKind = "REST" | "QUERY";
+
 export interface MicroserviceResponse {
   id: number;
   serviceId: string;
@@ -108,6 +110,21 @@ export interface MicroserviceResponse {
   targetUrlHost: string;
   targetUrlPort: string;
   createdDate: string;
+
+  /* ====================== provisioning (QUERY kind) ====================== */
+  /** Always present (the DB column is NOT NULL DEFAULT 'REST'). */
+  kind: MicroserviceKind;
+  /** Null for REST rows. */
+  dialect: string | null;
+  jdbcUrl: string | null;
+  dbUsername: string | null;
+  /** Backend deliberately omits this from the wire shape
+   *  ({@code MicroserviceResponse.fromEntity} returns null
+   *  for {@code dbPassword}); the form re-sends it on
+   *  updates. */
+  dbPassword: string | null;
+  poolSize: number | null;
+  instanceName: string | null;
 }
 
 export interface MicroserviceRequest {
@@ -118,6 +135,16 @@ export interface MicroserviceRequest {
   targetUriPath: string;
   targetUrlHost: string;
   targetUrlPort: string;
+
+  /* ====================== provisioning (QUERY kind) ====================== */
+  /** Defaults to {@code "REST"} on the wire if omitted. */
+  kind?: MicroserviceKind;
+  dialect?: string | null;
+  jdbcUrl?: string | null;
+  dbUsername?: string | null;
+  dbPassword?: string | null;
+  poolSize?: number | null;
+  instanceName?: string | null;
 }
 
 // ====================== sso-admin / endpoint ======================

@@ -14,6 +14,10 @@ import java.time.LocalDateTime;
  * {@code TIMESTAMP DEFAULT now()}). It is read-only in JPA
  * ({@code insertable=false, updatable=false}) and serialized
  * as an ISO-8601 string by Jackson.
+ *
+ * <p>The seven trailing fields mirror
+ * {@link MicroserviceRequest}; they are populated only for
+ * {@code kind=QUERY} rows (REST rows keep them null).
  */
 public record MicroserviceResponse(
         Long id,
@@ -23,7 +27,20 @@ public record MicroserviceResponse(
         String targetUriPath,
         String targetUrlHost,
         String targetUrlPort,
-        LocalDateTime createdDate
+        LocalDateTime createdDate,
+
+        /* ====================== provisioning (QUERY kind) ====================== */
+        String kind,
+        String dialect,
+        String jdbcUrl,
+        String dbUsername,
+        /** Never echoed back to clients — {@code fromEntity} passes
+         *  {@code null} here so the wire shape omits it. The DB column
+         *  is the source of truth for round-trips that need to
+         *  re-provision the container. */
+        String dbPassword,
+        Integer poolSize,
+        String instanceName
 ) {
     public static MicroserviceResponse fromEntity(Microservice m) {
         return new MicroserviceResponse(
@@ -34,6 +51,14 @@ public record MicroserviceResponse(
                 m.getTargetUriPath(),
                 m.getTargetUrlHost(),
                 m.getTargetUrlPort(),
-                m.getCreatedDate());
+                m.getCreatedDate(),
+                m.getKind(),
+                m.getDialect(),
+                m.getJdbcUrl(),
+                m.getDbUsername(),
+                /* dbPassword intentionally NOT echoed back to clients. */
+                null,
+                m.getPoolSize(),
+                m.getInstanceName());
     }
 }
