@@ -10,28 +10,47 @@ import java.util.Map;
  * Externalized datasource configuration. Bound from
  * {@code application.yml} under {@code query.datasources}.
  *
- * <p>One logical group per dialect: {@code postgres},
- * {@code oracle}, {@code sqlserver}. The legacy hard-coded a
- * single datasource; the modernized service supports three
- * because the spec lists each query's target DB on its
- * catalog row.
+ * <p>Two deployment shapes are supported from the same props
+ * class, and they're orthogonal — pick one or the other per
+ * deployment:
  *
- * <p><b>Why a Map of {@link Entry} and not a record per
- * dialect:</b> Spring Boot's relaxed binding requires the
- * keys to be known at compile time when using records.
- * A {@code Map<String, Entry>} lets new dialects be added in
- * YAML without code changes.
+ * <ol>
+ *   <li><b>Single-instance, multi-dialect (dev / small
+ *       prod).</b> The YAML/env defines
+ *       {@code query.datasources.entries.<dialect>.*} for
+ *       one or more dialects. The single query-service
+ *       process serves all of them; the
+ *       {@code JdbcTemplateRegistry} routes requests by
+ *       the catalog row's {@code TYPE} column.</li>
  *
- * <p><b>Constructor binding:</b> with {@code @ConfigurationProperties}
- * applied to the class, Spring binds the
- * {@code query.datasources.<key>.*} tree directly into the
- * map via the {@link #DataSourceProps(Map)} constructor —
- * no nested {@code entries} key in the YAML.
+ *   <li><b>Per-dialect instances (prod scale-out, the
+ *       model admin-ui drives).</b> The admin creates a new
+ *       {@code microservice} of kind QUERY for every
+ *       backing datasource it needs (one for Oracle, one
+ *       for the analytics Postgres, etc.). Each container
+ *       is a fresh copy of this image with env vars
+ *       {@code QUERY_DS_DIALECT=oracle},
+ *       {@code QUERY_DS_URL=jdbc:oracle:thin:...},
+ *       {@code QUERY_DS_USERNAME=...},
+ *       {@code QUERY_DS_PASSWORD=...}. The image boots
+ *       with one named pool and registers with Eureka
+ *       under {@code query-service-<dialect>} (the
+ *       auto-generated service id is the
+ *       {@code spring.application.name} +
+ *       {@code QUERY_INSTANCE_NAME} suffix).</li>
+ * </ol>
  *
- * <p><b>Per-dialect flag {@code enabled}:</b> dev runs only
- * Postgres, prod runs all three. Disabled entries are skipped
- * during bean construction so missing driver URLs don't
- * fail-fast on boot.
+ * <p>When {@code QUERY_DS_DIALECT} is set, the
+ * single-instance binding is ignored and the env-var
+ * config wins. This keeps the dev path (one YAML) and the
+ * scale-out path (env vars) from colliding on boot.
+ *
+ * <p><b>Constructor binding:</b> the
+ * {@code Map<String, Entry>} is bound via the
+ * {@link #DataSourceProps(Map)} constructor so the
+ * property path {@code query.datasources.entries.<key>.*}
+ * flows directly into the map keys. No field-name
+ * guessing required.
  */
 @ConfigurationProperties(prefix = "query.datasources")
 public class DataSourceProps {

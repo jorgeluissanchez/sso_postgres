@@ -250,6 +250,115 @@ services:
       - "${MAILHOG_SMTP_PORT:-1025}:1025"
       - "${MAILHOG_WEB_PORT:-8025}:8025"
 
+  # ===========================================================================
+  # query-service — dynamic, per-datasource instances.
+  # ===========================================================================
+  #
+  # Each query-service container is identical (same image)
+  # and is configured purely via env vars. The
+  # InstanceNameResolver env post-processor derives the
+  # Eureka service-id from QUERY_DS_DIALECT, so the gateway's
+  # auto-discovery locator routes
+  # /query-service-<dialect>/** to the right instance.
+  #
+  # To add a new backing datasource the operator just adds
+  # another service block below (or admin-ui triggers a
+  # provisioner that does the equivalent via the Docker /
+  # k8s API). The image itself does not change.
+  #
+  # In dev we ship two instances — one for the application's
+  # primary Postgres (the same one auth-center / sso-admin
+  # already use) and one as a stand-in for an analytics
+  # Postgres on a separate schema. Add an Oracle or SQL
+  # Server instance the same way (set QUERY_DS_DIALECT and
+  # QUERY_DS_URL).
+  # ===========================================================================
+  query-service-postgres:
+    build:
+      context: .
+      dockerfile: query-service/Dockerfile
+    image: eurekatic/query-service:1.0.0-SNAPSHOT
+    container_name: sso-query-service-postgres
+    restart: unless-stopped
+    mem_limit: 384m
+    mem_reservation: 256m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eurekaserver:
+        condition: service_started
+      sso-admin:
+        # The instance resolves uuids against sso-admin's
+        # /getQuery and /getWrite catalog endpoints on
+        # every request, so it cannot serve traffic until
+        # sso-admin is healthy.
+        condition: service_healthy
+    # No host-side port mapping — the gateway is the
+    # public ingress and it talks to the container over
+    # the compose network via Eureka service-id
+    # resolution.
+    environment:
+      # Per-instance config (instance mode). See
+      # InstanceProps.java.
+      QUERY_DS_DIALECT: postgres
+      QUERY_DS_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
+      QUERY_DS_USERNAME: ${POSTGRES_USER}
+      QUERY_DS_PASSWORD: ${POSTGRES_PASSWORD}
+      QUERY_DS_POOL_SIZE: "10"
+      # Eureka + JWT (same key auth-center uses)
+      EUREKA_URL: "http://eurekaserver:8761/eureka"
+      JWT_SECRET: ${JWT_SECRET}
+      # Catalog endpoint — sso-admin's controller paths
+      # are NOT prefixed, so the gateway base URL plus
+      # the literal /getQuery path resolves them.
+      QUERY_CATALOG_BASE_URL: "http://sso-api-gateway:8080/sso-admin"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8084/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # Example second instance — a stand-in analytics Postgres
+  # in this stack (the real prod use case is "Oracle",
+  # "SQLServer", "analytics-shard", etc., provisioned by
+  # admin-ui when a new backing store is registered).
+  query-service-postgres-analytics:
+    build:
+      context: .
+      dockerfile: query-service/Dockerfile
+    image: eurekatic/query-service:1.0.0-SNAPSHOT
+    container_name: sso-query-service-postgres-analytics
+    restart: unless-stopped
+    mem_limit: 384m
+    mem_reservation: 256m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eurekaserver:
+        condition: service_started
+      sso-admin:
+        condition: service_healthy
+    environment:
+      QUERY_DS_DIALECT: postgres
+      QUERY_DS_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
+      QUERY_DS_USERNAME: ${POSTGRES_USER}
+      QUERY_DS_PASSWORD: ${POSTGRES_PASSWORD}
+      QUERY_DS_POOL_SIZE: "10"
+      # Distinct instance name → distinct Eureka service-id
+      # → the gateway routes
+      # /query-service-postgres-analytics/** here.
+      QUERY_INSTANCE_NAME: postgres-analytics
+      EUREKA_URL: "http://eurekaserver:8761/eureka"
+      JWT_SECRET: ${JWT_SECRET}
+      QUERY_CATALOG_BASE_URL: "http://sso-api-gateway:8080/sso-admin"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8084/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
 volumes:
   postgres-data:
     # Named volume keeps the database across `docker compose down`

@@ -141,6 +141,40 @@ spring:
               filters:
                 - StripPrefix=1
                 - AddResponseHeader=X-Source, api-gateway
+            # query-service is dynamic: each backing
+            # datasource has its own container registered
+            # with Eureka under query-service-<dialect> or
+            # query-service-<custom-instance-name>. The
+            # auto-discovery locator (see discovery.locator
+            # below) auto-creates a route per service-id,
+            # lowercased. So:
+            #
+            #   /query-service-postgres/**          ->
+            #       query-service-postgres/{path}
+            #   /query-service-oracle/**            ->
+            #       query-service-oracle/{path}
+            #   /query-service-postgres-analytics/** ->
+            #       query-service-postgres-analytics/{path}
+            #
+            # We add a static legacy alias so existing
+            # callers (which hit /qs/** in the legacy
+            # sso-service URL surface) keep working — it
+            # forwards to the canonical postgres instance.
+            # StripPrefix=1 removes /qs before forwarding.
+            - id: query-service-legacy-alias
+              uri: lb://query-service-postgres
+              predicates:
+                - Path=/qs/**
+              filters:
+                - StripPrefix=1
+                - AddResponseHeader=X-Source, api-gateway
+            - id: api-query-service
+              uri: lb://query-service-postgres
+              predicates:
+                - Path=/api/qs/**
+              filters:
+                - StripPrefix=2
+                - AddResponseHeader=X-Source, api-gateway
           # 404 for unmatched paths (deny-by-default). The reactive
           # filter will translate this to a 401 for paths that need auth.
           default-filters:
