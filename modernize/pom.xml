@@ -118,5 +118,6 @@
         <module>api-gateway</module>
         <module>hello-service</module>
         <module>sso-admin</module>
+        <module>query-service</module>
     </modules>
 </project>
