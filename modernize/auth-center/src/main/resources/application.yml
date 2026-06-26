@@ -9,6 +9,15 @@ spring:
     banner-mode: off
 
   datasource:
+    # The localhost default assumes the operator is running
+    # auth-center on the host with Postgres reachable via the
+    # Docker port mapping (compose forwards
+    # ${POSTGRES_PORT:-5432}:5432 to the host's loopback).
+    # For container runs the compose env block overrides this
+    # with the in-network hostname `postgres`. For a host run
+    # where Postgres lives in another container on a
+    # different bridge, set DB_URL to host.docker.internal
+    # (Docker Desktop / colima) or the container's bridge IP.
     url: ${DB_URL:jdbc:postgresql://localhost:5432/sso}
     username: ${DB_USER:sso}
     password: ${DB_PASSWORD:change-me-in-prod}
@@ -16,7 +25,26 @@ spring:
     hikari:
       maximum-pool-size: 10
       minimum-idle: 2
-      connection-timeout: 30000
+      # 5s instead of Hikari's 30s default. A request that
+      # can't get a connection within 5s is in a worse state
+      # than 503ing fast — the default 30s makes every login
+      # / refresh / user-lookup hang for half a minute when
+      # Postgres is briefly unreachable, which is what users
+      # perceive as "the app is broken". 5s is short enough
+      # to fail fast, long enough to absorb a normal TCP
+      # handshake under load.
+      connection-timeout: 5000
+      # Same idea on the liveness probe: a connection that
+      # can't pass `SELECT 1` in 3s is dead, kill it.
+      validation-timeout: 3000
+      # When the pool starts up, if the very first connection
+      # can't be acquired, fail the application boot instead
+      # of starting in a half-broken state. The default of
+      # 1ms (== "wait forever") is a footgun: every request
+      # would time out on the connection-timeout above
+      # instead of the operator getting a clear
+      # "Postgres is down" message at startup.
+      initialization-fail-timeout: 5000
 
   jpa:
     hibernate:

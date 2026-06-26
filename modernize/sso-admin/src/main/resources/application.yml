@@ -11,6 +11,12 @@ spring:
     banner-mode: off
 
   datasource:
+    # The localhost default assumes the operator is running
+    # sso-admin on the host with Postgres reachable via the
+    # Docker port mapping. For container runs the compose
+    # env block overrides this with `postgres` (the
+    # in-network hostname). See auth-center's datasource
+    # block for the full set of overrides.
     url: ${DB_URL:jdbc:postgresql://localhost:5432/sso}
     username: ${DB_USER:sso}
     password: ${DB_PASSWORD:change-me-in-prod}
@@ -18,7 +24,12 @@ spring:
     hikari:
       maximum-pool-size: 10
       minimum-idle: 2
-      connection-timeout: 30000
+      # Fail fast on DB unavailability. See auth-center
+      # for the rationale — 5s connection acquisition,
+      # 3s liveness probe, 5s startup fail.
+      connection-timeout: 5000
+      validation-timeout: 3000
+      initialization-fail-timeout: 5000
 
   jpa:
     hibernate:
