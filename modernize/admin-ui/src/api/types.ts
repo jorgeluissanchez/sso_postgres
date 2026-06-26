@@ -147,6 +147,43 @@ export interface MicroserviceRequest {
   instanceName?: string | null;
 }
 
+/* ====================== sso-admin / container status ======================
+ *
+ * Returned by GET /sso-admin/microservice/{id}/container/status.
+ * The backend proxies to the provisioner's
+ * GET /provision/{fullName}/status, translates the Docker
+ * state string into a normalized value, and adds the
+ * timestamp. `state` is null when the container does not
+ * exist on the host (provisioner returns 404 → backend
+ * returns 200 with state=null so the UI can render an
+ * "absent" badge without throwing).
+ */
+export interface ContainerStatusResponse {
+  /** Normalized container state — see StatusBadge for the
+   *  full list. Raw Docker state is in {@link rawState}. */
+  state:
+    | "running"
+    | "exited"
+    | "created"
+    | "paused"
+    | "restarting"
+    | "dead"
+    | "removing"
+    | "absent"
+    | "provisioning"
+    | "unknown";
+  /** Original Docker Engine API state string. Useful for
+   *  debugging — surfaced in a tooltip on the status badge. */
+  rawState: string | null;
+  /** Container id from Docker, null when absent. */
+  containerId: string | null;
+  /** ISO-8601 timestamp of the last container start (per
+   *  the Docker inspect response). Null when absent. */
+  startedAt: string | null;
+  /** Full container name (`query-service-<instanceName>`). */
+  fullName: string;
+}
+
 // ====================== sso-admin / endpoint ======================
 
 export interface EndpointResponse {

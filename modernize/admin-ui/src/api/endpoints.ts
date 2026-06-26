@@ -9,6 +9,7 @@
 import { apiClient } from "./client";
 import type {
   BindUserRoleRequest,
+  ContainerStatusResponse,
   CreateAccountRequest,
   EndpointMicroserviceChecked,
   EndpointRequest,
@@ -87,6 +88,28 @@ export const microservicesApi = {
   update: (body: MicroserviceRequest) =>
     apiClient.put<MicroserviceResponse>("/sso-admin/microservice/update", body),
   delete: (id: number) => apiClient.delete<void>(`/sso-admin/microservice/${id}`),
+};
+
+/* ====================== query-service container (provisioner-backed) ======================
+ *
+ * The provisioner is internal-only (compose port 9000 has no
+ * host mapping). sso-admin proxies these calls so the browser
+ * only ever talks to the gateway. The endpoints here describe
+ * the contract the backend is expected to implement; the admin-ui
+ * ships them now so the page is ready when the proxy endpoints
+ * land.
+ *
+ * POST /restart returns 202 Accepted — the restart is async
+ * (provisioner issues stop+start, takes 1-3s). The UI fires it
+ * and the next status poll picks up the new state.
+ */
+export const queryServicesApi = {
+  status: (id: number) =>
+    apiClient.get<ContainerStatusResponse>(`/sso-admin/microservice/${id}/container/status`),
+  logs: (id: number, tail = 200) =>
+    apiClient.get<string>(`/sso-admin/microservice/${id}/container/logs?tail=${tail}`),
+  restart: (id: number) =>
+    apiClient.post<void>(`/sso-admin/microservice/${id}/container/restart`),
 };
 
 // ====================== endpoint ======================

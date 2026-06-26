@@ -5,6 +5,7 @@ import { RequireAuth } from "@/auth/RequireAuth";
 import { App } from "@/App";
 import { GroupsListPage } from "@/pages/groups/GroupsListPage";
 import { MicroservicesListPage } from "@/pages/microservices/MicroservicesListPage";
+import { QueryServicesListPage } from "@/pages/query-services/QueryServicesListPage";
 import { EndpointsListPage } from "@/pages/endpoints/EndpointsListPage";
 import { RoutesListPage } from "@/pages/routes/RoutesListPage";
 import { RolesListPage } from "@/pages/roles/RolesListPage";
@@ -34,6 +35,7 @@ export const router = createBrowserRouter([
           { path: "roles", element: <RolesListPage /> },
           { path: "groups", element: <GroupsListPage /> },
           { path: "microservices", element: <MicroservicesListPage /> },
+          { path: "query-services", element: <QueryServicesListPage /> },
           { path: "endpoints", element: <EndpointsListPage /> },
           { path: "routes", element: <RoutesListPage /> },
         ],
