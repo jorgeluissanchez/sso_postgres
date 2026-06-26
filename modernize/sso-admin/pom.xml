@@ -103,6 +103,16 @@
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- WebTestClient (mocked by Spring Security's
+             SecurityMockMvcConfigurers) needs spring-webflux on
+             the classpath even when the WebApplicationContext
+             itself is servlet. See auth-center tests for the same
+             pattern. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- H2 in PostgreSQL compatibility mode for tests. Tests use
              NON_KEYWORDS=GROUPS so the @Table(name="groups") entity
              can be created against H2 (groups is reserved in H2). -->

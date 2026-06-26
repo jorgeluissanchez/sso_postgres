@@ -5,9 +5,11 @@ import com.co.eurekatic.common.entity.User;
 import com.co.eurekatic.common.repository.EndpointRepository;
 import com.co.eurekatic.common.repository.GroupRepository;
 import com.co.eurekatic.common.repository.MicroserviceRepository;
+import com.co.eurekatic.common.repository.QueryRepository;
 import com.co.eurekatic.common.repository.RoleRepository;
 import com.co.eurekatic.common.repository.RouteRepository;
 import com.co.eurekatic.common.repository.UserRepository;
+import com.co.eurekatic.common.repository.WriteDefinitionRepository;
 import com.co.eurekatic.common.security.JwtTokenService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,43 +17,63 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.boot.test.web.client.TestRestTemplate;
-import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.FilterChainProxy;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.reactive.server.EntityExchangeResult;
+import org.springframework.test.web.reactive.server.WebTestClient;
+import org.springframework.test.web.servlet.client.MockMvcWebTestClient;
+import org.springframework.web.context.WebApplicationContext;
 
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 
 /**
  * End-to-end integration test for the sso-admin module.
  *
- * <p>Boots the full Spring context with an in-memory H2
- * database (PostgreSQL compatibility mode + NON_KEYWORDS=GROUPS
- * so the {@code groups} table can be created), exchanges real
- * HTTP requests through TestRestTemplate, and asserts the
+ * <p>Boots the full Spring context with an in-memory H2 database
+ * (PostgreSQL compatibility mode + NON_KEYWORDS=GROUPS so the
+ * {@code groups} table can be created), exchanges real HTTP
+ * requests through a {@link WebTestClient} bound to the
+ * application's {@link WebApplicationContext}, and asserts the
  * security rules, the activation flow, and the role binding
  * round-trip.
+ *
+ * <p><b>Why WebTestClient and not TestRestTemplate:</b>
+ * Spring Boot 4.0 removed {@code TestRestTemplate} (replaced by
+ * {@code RestTestClient}). We sidestep that whole migration by
+ * binding the {@code WebTestClient} directly to the servlet
+ * context via {@link MockMvcWebTestClient}. This also keeps the
+ * Spring Security filter chain in the loop — without
+ * {@code springSecurity()} the security rules are silently
+ * bypassed and the {@code /getUsers} test below would return
+ * 200 instead of 401/403.
+ *
+ * <p><b>Why we consume JSON manually:</b> the servlet-mode
+ * {@code WebTestClient} does not auto-install Jackson codecs,
+ * so {@code .expectBody(JsonNode.class)} fails with a
+ * "Type definition error". We consume the body as
+ * {@code byte[]} and parse with the {@link ObjectMapper} bean
+ * — same pattern the legacy {@code TestRestTemplate} code used.
  *
  * <p>The {@link com.co.eurekatic.ssoadmin.service.EmailService}
  * bean is replaced with a mock — we don't want SMTP in tests.
  */
 @SpringBootTest(
         classes = SsoAdminApplication.class,
-        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
+        webEnvironment = SpringBootTest.WebEnvironment.MOCK
 )
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:sso-admin-test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;NON_KEYWORDS=GROUPS;DB_CLOSE_DELAY=-1",
@@ -72,26 +94,52 @@ import static org.mockito.Mockito.doNothing;
 })
 class SsoAdminIntegrationTest {
 
-    @LocalServerPort int port;
+    @Autowired WebApplicationContext context;
+    @Autowired FilterChainProxy springSecurityFilterChain;
     @Autowired UserRepository userRepository;
     @Autowired RoleRepository roleRepository;
     @Autowired GroupRepository groupRepository;
     @Autowired MicroserviceRepository microserviceRepository;
     @Autowired EndpointRepository endpointRepository;
     @Autowired RouteRepository routeRepository;
+    @Autowired QueryRepository queryRepository;
+    @Autowired WriteDefinitionRepository writeDefinitionRepository;
+    @Autowired JdbcTemplate jdbcTemplate;
     @Autowired PasswordEncoder passwordEncoder;
     @Autowired JwtTokenService jwtService;
     @Autowired ObjectMapper mapper;
-    @Autowired TestRestTemplate rest;
 
-    // Don't hit SMTP in tests.
-    @MockBean
+    private WebTestClient client;
+
+    // Don't hit SMTP in tests. @MockitoBean replaces the legacy
+    // @MockBean annotation (Spring Framework 7 / Boot 4 moved
+    // it to spring-test's bean.override.mockito package).
+    @MockitoBean
     com.co.eurekatic.ssoadmin.service.EmailService emailServiceMock;
 
     @BeforeEach
-    void seed() {
+    void setUp() {
+        // Bind a WebTestClient directly to the servlet
+        // application context with the springSecurity()
+        // configurer so the security filter chain is honored
+        // (otherwise every request would bypass auth and the
+        // FORBIDDEN assertion in protectedEndpointRejects*
+        // would fail). MockMvcWebTestClient is servlet-based,
+        // no real HTTP server needed.
+        client = MockMvcWebTestClient.bindToApplicationContext(context)
+                .apply(springSecurity(springSecurityFilterChain))
+                .build();
+
         // Order matters: child tables before parents so FK
-        // constraints don't trip on the H2 re-init.
+        // constraints don't trip on the H2 re-init. Catalog
+        // join tables (role_query, role_write) reference role
+        // and must be cleared first via a native query —
+        // JPA repository.deleteAll() doesn't traverse the
+        // join-table rows.
+        jdbcTemplate.execute("DELETE FROM role_query");
+        jdbcTemplate.execute("DELETE FROM role_write");
+        queryRepository.deleteAll();
+        writeDefinitionRepository.deleteAll();
         routeRepository.deleteAll();
         endpointRepository.deleteAll();
         microserviceRepository.deleteAll();
@@ -121,35 +169,45 @@ class SsoAdminIntegrationTest {
 
     @Test
     void healthEndpointIsPublic() {
-        ResponseEntity<String> resp = rest.getForEntity(url("/actuator/health"), String.class);
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(resp.getBody()).contains("\"status\":\"UP\"");
+        client.get().uri("/actuator/health")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(body -> assertThat(new String(body))
+                        .contains("\"status\":\"UP\""));
     }
 
     @Test
     void protectedEndpointRejectsRequestWithoutToken() {
-        ResponseEntity<String> resp = rest.getForEntity(url("/getUsers"), String.class);
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        // No Authorization header → SecurityConfig says
+        // authenticated() or hasRole("ADMIN"), so anonymous
+        // requests are rejected. MockMvc returns 403 (not
+        // 401) because there's no AuthenticationEntryPoint
+        // configured — Spring Security's default for
+        // stateless API is the 403 path.
+        client.get().uri("/getUsers")
+                .exchange()
+                .expectStatus().isForbidden();
     }
 
     /* ====================== auth-gated CRUD ====================== */
 
     @Test
-    void getUsersReturnsSeededAdmin() throws Exception {
+    void getUsersReturnsSeededAdmin() {
         String token = tokenFor("root", "ADMIN");
 
-        HttpHeaders h = new HttpHeaders();
-        h.setBearerAuth(token);
-        ResponseEntity<String> resp = rest.exchange(
-                url("/getUsers"), HttpMethod.GET, new HttpEntity<>(h), String.class);
-
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
-        JsonNode body = mapper.readTree(resp.getBody());
-        assertThat(body.isArray()).isTrue();
-        assertThat(body).hasSize(1);
-        assertThat(body.get(0).get("username").asText()).isEqualTo("root");
-        // The password is NEVER exposed in the response.
-        assertThat(body.get(0).has("password")).isFalse();
+        client.get().uri("/getUsers")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(jsonBody(arr -> {
+                    assertThat(arr.isArray()).isTrue();
+                    assertThat(arr).hasSize(1);
+                    assertThat(arr.get(0).get("username").asText()).isEqualTo("root");
+                    // The password is NEVER exposed in the response.
+                    assertThat(arr.get(0).has("password")).isFalse();
+                }));
     }
 
     @Test
@@ -164,18 +222,18 @@ class SsoAdminIntegrationTest {
                 "roleNames", List.of("ADMIN")
         ));
 
-        HttpHeaders h = new HttpHeaders();
-        h.setContentType(MediaType.APPLICATION_JSON);
-        h.setBearerAuth(token);
-        ResponseEntity<String> resp = rest.exchange(
-                url("/createAccount"), HttpMethod.POST,
-                new HttpEntity<>(body, h), String.class);
-
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        JsonNode json = mapper.readTree(resp.getBody());
-        assertThat(json.get("username").asText()).isEqualTo("alice");
-        assertThat(json.get("active").asBoolean()).isTrue();
-        assertThat(json.get("ldap").asBoolean()).isFalse();
+        client.post().uri("/createAccount")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(byte[].class)
+                .value(jsonBody(json -> {
+                    assertThat(json.get("username").asText()).isEqualTo("alice");
+                    assertThat(json.get("active").asBoolean()).isTrue();
+                    assertThat(json.get("ldap").asBoolean()).isFalse();
+                }));
 
         User stored = userRepository.findByUsername("alice").orElseThrow();
         // Until the activation link is clicked, the user cannot log in.
@@ -198,15 +256,16 @@ class SsoAdminIntegrationTest {
                 "email", "other@example.com",
                 "password", "s3cret"
         ));
-        HttpHeaders h = jsonHeadersWith(token);
 
-        ResponseEntity<String> resp = rest.exchange(
-                url("/createAccount"), HttpMethod.POST,
-                new HttpEntity<>(body, h), String.class);
-
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
-        assertThat(mapper.readTree(resp.getBody()).get("code").asText())
-                .isEqualTo("USER_DUPLICATE");
+        client.post().uri("/createAccount")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isEqualTo(409)
+                .expectBody(byte[].class)
+                .value(jsonBody(b -> assertThat(b.get("code").asText())
+                        .isEqualTo("USER_DUPLICATE")));
     }
 
     @Test
@@ -218,15 +277,13 @@ class SsoAdminIntegrationTest {
                 "email", "not-an-email",
                 "password", "s3cret"
         ));
-        HttpHeaders h = jsonHeadersWith(token);
 
-        ResponseEntity<String> resp = rest.exchange(
-                url("/createAccount"), HttpMethod.POST,
-                new HttpEntity<>(body, h), String.class);
-
-        // @Email validation kicks in before our second-line regex,
-        // so the response is the generic VALIDATION_FAILED.
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        client.post().uri("/createAccount")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isEqualTo(422);
     }
 
     @Test
@@ -237,20 +294,24 @@ class SsoAdminIntegrationTest {
         String body = mapper.writeValueAsString(Map.of(
                 "fullName", "Bob", "username", "bob", "email", "bob@example.com",
                 "password", "s3cret"));
-        HttpHeaders h = jsonHeadersWith(token);
-        rest.exchange(url("/createAccount"), HttpMethod.POST,
-                new HttpEntity<>(body, h), String.class);
+        client.post().uri("/createAccount")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isCreated();
 
         User created = userRepository.findByUsername("bob").orElseThrow();
         String activationToken = created.getTokenActivation();
         assertThat(activationToken).isNotBlank();
 
         // No Authorization header — the link from the email does NOT include one.
-        ResponseEntity<String> resp = rest.exchange(
-                url("/activateAccount?token=" + activationToken + "&password=newpass1"),
-                HttpMethod.GET, new HttpEntity<>(new HttpHeaders()), String.class);
-
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        client.get().uri(uri -> uri.path("/activateAccount")
+                        .queryParam("token", activationToken)
+                        .queryParam("password", "newpass1")
+                        .build())
+                .exchange()
+                .expectStatus().isOk();
 
         User after = userRepository.findByUsername("bob").orElseThrow();
         assertThat(after.isEnabled()).isTrue();
@@ -262,56 +323,67 @@ class SsoAdminIntegrationTest {
 
     @Test
     void activateAccountWithUnknownTokenReturns404() {
-        ResponseEntity<String> resp = rest.exchange(
-                url("/activateAccount?token=does-not-exist&password=newpass1"),
-                HttpMethod.GET, new HttpEntity<>(new HttpHeaders()), String.class);
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        client.get().uri(uri -> uri.path("/activateAccount")
+                        .queryParam("token", "does-not-exist")
+                        .queryParam("password", "newpass1")
+                        .build())
+                .exchange()
+                .expectStatus().isNotFound();
     }
 
     @Test
     void roleCreateAndListRoundTrip() throws Exception {
         String token = tokenFor("root", "ADMIN");
-        HttpHeaders h = jsonHeadersWith(token);
 
-        ResponseEntity<String> created = rest.exchange(
-                url("/role/createRole"), HttpMethod.POST,
-                new HttpEntity<>(mapper.writeValueAsString(
-                        Map.of("name", "AUDITOR", "description", "Read only")), h),
-                String.class);
-        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        client.post().uri("/role/createRole")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(
+                        Map.of("name", "AUDITOR", "description", "Read only")))
+                .exchange()
+                .expectStatus().isCreated();
 
-        ResponseEntity<String> all = rest.exchange(
-                url("/role/getRoles"), HttpMethod.GET, new HttpEntity<>(h), String.class);
-        assertThat(all.getStatusCode()).isEqualTo(HttpStatus.OK);
-        JsonNode arr = mapper.readTree(all.getBody());
-        assertThat(arr).hasSizeGreaterThanOrEqualTo(2); // ADMIN + AUDITOR
+        client.get().uri("/role/getRoles")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(jsonBody(b -> assertThat(b)
+                        .hasSizeGreaterThanOrEqualTo(2))); // ADMIN + AUDITOR
 
-        ResponseEntity<String> own = rest.exchange(
-                url("/role/getRolesOwn"), HttpMethod.GET, new HttpEntity<>(h), String.class);
-        JsonNode ownArr = mapper.readTree(own.getBody());
         // Just make sure the endpoint shape is what the legacy UI expects.
-        assertThat(ownArr.isArray()).isTrue();
+        client.get().uri("/role/getRolesOwn")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(jsonBody(b -> assertThat(b.isArray()).isTrue()));
     }
 
     @Test
     void groupCreateAndList() throws Exception {
         String token = tokenFor("root", "ADMIN");
-        HttpHeaders h = jsonHeadersWith(token);
 
-        ResponseEntity<String> created = rest.exchange(
-                url("/group"), HttpMethod.POST,
-                new HttpEntity<>(mapper.writeValueAsString(
-                        Map.of("name", "Ops", "description", "Operations")), h),
-                String.class);
-        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        assertThat(mapper.readTree(created.getBody()).get("name").asText())
-                .isEqualTo("Ops");
+        client.post().uri("/group")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(
+                        Map.of("name", "Ops", "description", "Operations")))
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(byte[].class)
+                .value(jsonBody(b -> assertThat(b.get("name").asText())
+                        .isEqualTo("Ops")));
 
-        ResponseEntity<String> all = rest.exchange(
-                url("/group"), HttpMethod.GET, new HttpEntity<>(h), String.class);
-        JsonNode arr = mapper.readTree(all.getBody());
-        assertThat(arr).hasSize(1);
-        assertThat(arr.get(0).get("memberCount").asInt()).isZero();
+        client.get().uri("/group")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(jsonBody(arr -> {
+                    assertThat(arr).hasSize(1);
+                    assertThat(arr.get(0).get("memberCount").asInt()).isZero();
+                }));
     }
 
     /* ====================== Phase 2: microservice / endpoint / route ====================== */
@@ -328,37 +400,50 @@ class SsoAdminIntegrationTest {
                 "targetUrlPort", "8080"
         ));
 
-        ResponseEntity<String> created = rest.exchange(
-                url("/microservice/save"), HttpMethod.POST,
-                new HttpEntity<>(body, jsonHeadersWith(token)), String.class);
-        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        JsonNode createdJson = mapper.readTree(created.getBody());
-        assertThat(createdJson.get("serviceId").asText()).isEqualTo("users-svc");
+        client.post().uri("/microservice/save")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(byte[].class)
+                .value(jsonBody(b -> assertThat(b.get("serviceId").asText())
+                        .isEqualTo("users-svc")));
 
-        ResponseEntity<String> all = rest.exchange(
-                url("/microservice/getMicroservices"), HttpMethod.GET,
-                new HttpEntity<>(jsonHeadersWith(token)), String.class);
-        JsonNode arr = mapper.readTree(all.getBody());
-        assertThat(arr).hasSize(1);
-        assertThat(arr.get(0).get("serviceId").asText()).isEqualTo("users-svc");
-        assertThat(arr.get(0).has("password")).isFalse();
+        client.get().uri("/microservice/getMicroservices")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(jsonBody(arr -> {
+                    assertThat(arr).hasSize(1);
+                    assertThat(arr.get(0).get("serviceId").asText())
+                            .isEqualTo("users-svc");
+                    assertThat(arr.get(0).has("password")).isFalse();
+                }));
     }
 
     @Test
     void microserviceDuplicateServiceIdReturns409() throws Exception {
         String token = tokenFor("root", "ADMIN");
         String body = mapper.writeValueAsString(Map.of("serviceId", "dup"));
-        HttpHeaders h = jsonHeadersWith(token);
 
-        rest.exchange(url("/microservice/save"), HttpMethod.POST,
-                new HttpEntity<>(body, h), String.class);
+        client.post().uri("/microservice/save")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isCreated();
 
-        ResponseEntity<String> second = rest.exchange(
-                url("/microservice/save"), HttpMethod.POST,
-                new HttpEntity<>(body, h), String.class);
-        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
-        assertThat(mapper.readTree(second.getBody()).get("code").asText())
-                .isEqualTo("DUPLICATE");
+        client.post().uri("/microservice/save")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isEqualTo(409)
+                .expectBody(byte[].class)
+                .value(jsonBody(b -> assertThat(b.get("code").asText())
+                        .isEqualTo("DUPLICATE")));
     }
 
     @Test
@@ -366,38 +451,49 @@ class SsoAdminIntegrationTest {
         String token = tokenFor("root", "ADMIN");
 
         // Create a microservice to bind to.
-        ResponseEntity<String> ms = rest.exchange(
-                url("/microservice/save"), HttpMethod.POST,
-                new HttpEntity<>(mapper.writeValueAsString(Map.of("serviceId", "users-svc")),
-                        jsonHeadersWith(token)), String.class);
-        long microserviceId = mapper.readTree(ms.getBody()).get("id").asLong();
+        EntityExchangeResult<byte[]> msResult = client.post().uri("/microservice/save")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(Map.of("serviceId", "users-svc")))
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(byte[].class)
+                .returnResult();
+        long microserviceId = mapper.readTree(msResult.getResponseBody()).get("id").asLong();
 
         // Create the endpoint.
-        ResponseEntity<String> ep = rest.exchange(
-                url("/endpoint/save"), HttpMethod.POST,
-                new HttpEntity<>(mapper.writeValueAsString(Map.of(
-                                "method", "GET",
-                                "path", "/api/users",
-                                "description", "List users",
-                                "numberParams", 0)),
-                        jsonHeadersWith(token)), String.class);
-        assertThat(ep.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        long endpointId = mapper.readTree(ep.getBody()).get("id").asLong();
+        EntityExchangeResult<byte[]> epResult = client.post().uri("/endpoint/save")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(Map.of(
+                        "method", "GET",
+                        "path", "/api/users",
+                        "description", "List users",
+                        "numberParams", 0)))
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(byte[].class)
+                .returnResult();
+        long endpointId = mapper.readTree(epResult.getResponseBody()).get("id").asLong();
 
         // Bind the microservice.
-        ResponseEntity<Void> bind = rest.exchange(
-                url("/endpoint/" + endpointId + "/microservice/" + microserviceId),
-                HttpMethod.POST, new HttpEntity<>(jsonHeadersWith(token)), Void.class);
-        assertThat(bind.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        client.post().uri("/endpoint/" + endpointId + "/microservice/" + microserviceId)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange()
+                .expectStatus().isNoContent();
 
         // Verified by the checked listing.
-        ResponseEntity<String> checked = rest.exchange(
-                url("/endpoint/" + endpointId + "/microservices/checked"),
-                HttpMethod.GET, new HttpEntity<>(jsonHeadersWith(token)), String.class);
-        JsonNode rows = mapper.readTree(checked.getBody());
-        assertThat(rows).hasSize(1);
-        assertThat(rows.get(0).get("serviceId").asText()).isEqualTo("users-svc");
-        assertThat(rows.get(0).get("checked").asBoolean()).isTrue();
+        client.get().uri("/endpoint/" + endpointId + "/microservices/checked")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(jsonBody(rows -> {
+                    assertThat(rows).hasSize(1);
+                    assertThat(rows.get(0).get("serviceId").asText())
+                            .isEqualTo("users-svc");
+                    assertThat(rows.get(0).get("checked").asBoolean()).isTrue();
+                }));
     }
 
     @Test
@@ -405,42 +501,54 @@ class SsoAdminIntegrationTest {
         String token = tokenFor("root", "ADMIN");
         String body = mapper.writeValueAsString(Map.of(
                 "method", "GET", "path", "/dup", "description", "D", "numberParams", 0));
-        HttpHeaders h = jsonHeadersWith(token);
 
-        rest.exchange(url("/endpoint/save"), HttpMethod.POST,
-                new HttpEntity<>(body, h), String.class);
+        client.post().uri("/endpoint/save")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isCreated();
 
-        ResponseEntity<String> second = rest.exchange(
-                url("/endpoint/save"), HttpMethod.POST,
-                new HttpEntity<>(body, h), String.class);
-        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        client.post().uri("/endpoint/save")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isEqualTo(409);
     }
 
     @Test
     void endpointBindRoleAndCheckedListing() throws Exception {
         String token = tokenFor("root", "ADMIN");
 
-        ResponseEntity<String> ep = rest.exchange(
-                url("/endpoint/save"), HttpMethod.POST,
-                new HttpEntity<>(mapper.writeValueAsString(Map.of(
-                                "method", "POST", "path", "/x", "description", "x", "numberParams", 0)),
-                        jsonHeadersWith(token)), String.class);
-        long endpointId = mapper.readTree(ep.getBody()).get("id").asLong();
+        EntityExchangeResult<byte[]> epResult = client.post().uri("/endpoint/save")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(Map.of(
+                        "method", "POST", "path", "/x", "description", "x", "numberParams", 0)))
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(byte[].class)
+                .returnResult();
+        long endpointId = mapper.readTree(epResult.getResponseBody()).get("id").asLong();
 
         long adminRoleId = roleRepository.findByName("ADMIN").orElseThrow().getId();
 
-        ResponseEntity<Void> bind = rest.exchange(
-                url("/endpoint/" + endpointId + "/role/" + adminRoleId),
-                HttpMethod.POST, new HttpEntity<>(jsonHeadersWith(token)), Void.class);
-        assertThat(bind.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        client.post().uri("/endpoint/" + endpointId + "/role/" + adminRoleId)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange()
+                .expectStatus().isNoContent();
 
-        ResponseEntity<String> checked = rest.exchange(
-                url("/endpoint/" + endpointId + "/roles/checked"),
-                HttpMethod.GET, new HttpEntity<>(jsonHeadersWith(token)), String.class);
-        JsonNode rows = mapper.readTree(checked.getBody());
-        assertThat(rows).hasSize(1);
-        assertThat(rows.get(0).get("name").asText()).isEqualTo("ADMIN");
-        assertThat(rows.get(0).get("checked").asBoolean()).isTrue();
+        client.get().uri("/endpoint/" + endpointId + "/roles/checked")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(jsonBody(rows -> {
+                    assertThat(rows).hasSize(1);
+                    assertThat(rows.get(0).get("name").asText()).isEqualTo("ADMIN");
+                    assertThat(rows.get(0).get("checked").asBoolean()).isTrue();
+                }));
     }
 
     @Test
@@ -454,65 +562,232 @@ class SsoAdminIntegrationTest {
                 "idParent", 0    // legacy "root" sentinel
         ));
 
-        ResponseEntity<String> created = rest.exchange(
-                url("/route/save"), HttpMethod.POST,
-                new HttpEntity<>(body, jsonHeadersWith(token)), String.class);
-        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-
-        // The response and the persisted row should both have idParent = null.
-        JsonNode json = mapper.readTree(created.getBody());
-        assertThat(json.get("idParent").isNull()).isTrue();
+        client.post().uri("/route/save")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(byte[].class)
+                .value(jsonBody(b -> assertThat(b.get("idParent").isNull())
+                        .isTrue()));
 
         // /route/getRoutesByParent without an idParent should return roots only.
-        ResponseEntity<String> roots = rest.exchange(
-                url("/route/getRoutesByParent"), HttpMethod.GET,
-                new HttpEntity<>(jsonHeadersWith(token)), String.class);
-        JsonNode arr = mapper.readTree(roots.getBody());
-        assertThat(arr).hasSize(1);
-        assertThat(arr.get(0).get("name").asText()).isEqualTo("Home");
+        client.get().uri("/route/getRoutesByParent")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(jsonBody(arr -> {
+                    assertThat(arr).hasSize(1);
+                    assertThat(arr.get(0).get("name").asText()).isEqualTo("Home");
+                }));
     }
 
     @Test
     void routeBindRoleAndCheckedListing() throws Exception {
         String token = tokenFor("root", "ADMIN");
 
-        ResponseEntity<String> created = rest.exchange(
-                url("/route/save"), HttpMethod.POST,
-                new HttpEntity<>(mapper.writeValueAsString(Map.of(
-                                "name", "Settings", "path", "/settings", "menuOrder", 2)),
-                        jsonHeadersWith(token)), String.class);
-        long routeId = mapper.readTree(created.getBody()).get("id").asLong();
+        EntityExchangeResult<byte[]> created = client.post().uri("/route/save")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(Map.of(
+                        "name", "Settings", "path", "/settings", "menuOrder", 2)))
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(byte[].class)
+                .returnResult();
+        long routeId = mapper.readTree(created.getResponseBody()).get("id").asLong();
 
         long adminRoleId = roleRepository.findByName("ADMIN").orElseThrow().getId();
-        ResponseEntity<Void> bind = rest.exchange(
-                url("/route/" + routeId + "/role/" + adminRoleId),
-                HttpMethod.POST, new HttpEntity<>(jsonHeadersWith(token)), Void.class);
-        assertThat(bind.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        client.post().uri("/route/" + routeId + "/role/" + adminRoleId)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange()
+                .expectStatus().isNoContent();
 
-        ResponseEntity<String> checked = rest.exchange(
-                url("/route/" + routeId + "/roles/checked"),
-                HttpMethod.GET, new HttpEntity<>(jsonHeadersWith(token)), String.class);
-        JsonNode rows = mapper.readTree(checked.getBody());
-        assertThat(rows).hasSize(1);
-        assertThat(rows.get(0).get("name").asText()).isEqualTo("ADMIN");
-        assertThat(rows.get(0).get("checked").asBoolean()).isTrue();
+        client.get().uri("/route/" + routeId + "/roles/checked")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(jsonBody(rows -> {
+                    assertThat(rows).hasSize(1);
+                    assertThat(rows.get(0).get("name").asText()).isEqualTo("ADMIN");
+                    assertThat(rows.get(0).get("checked").asBoolean()).isTrue();
+                }));
+    }
+
+    /* ====================== Phase 3: query/write catalog endpoints ====================== */
+
+    /**
+     * The catalog endpoints (/getQuery, /getWrite) accept ANY
+     * authenticated caller — the per-row permission check
+     * happens inside the catalog service. We seed a Query
+     * bound to ADMIN, a Query with publicEnd=true, and a Query
+     * bound to a non-admin role, then probe all three from a
+     * caller that has only USER (not ADMIN).
+     */
+    @Test
+    void getQueryEndpointRequiresRoleBindingUnlessPublic() throws Exception {
+        com.co.eurekatic.common.entity.Query adminOnly =
+                seedQuery("q-admin", "SELECT 1", false, "ADMIN");
+        com.co.eurekatic.common.entity.Query publicQ =
+                seedQuery("q-public", "SELECT 2", true, "ANALYST");
+        com.co.eurekatic.common.entity.Query analystOnly =
+                seedQuery("q-analyst", "SELECT 3", false, "ANALYST");
+
+        // Caller "alice" has USER only — none of the bound
+        // roles for any of the seeded queries.
+        String userToken = tokenFor("alice", "USER");
+
+        // Bound to ADMIN, alice is not ADMIN → 403.
+        client.get().uri(uri -> uri.path("/getQuery")
+                        .queryParam("uuid", adminOnly.getUuid()).build())
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken)
+                .exchange()
+                .expectStatus().isForbidden();
+
+        // publicEnd=true → caller gets it regardless of role.
+        client.get().uri(uri -> uri.path("/getQuery")
+                        .queryParam("uuid", publicQ.getUuid()).build())
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(jsonBody(b -> assertThat(b.get("uuid").asText())
+                        .isEqualTo(publicQ.getUuid())));
+
+        // Bound to ANALYST, alice is not ANALYST → 403. The
+        // "missing vs forbidden" indistinguishability is by
+        // design — verify it also returns 403 (not 404).
+        client.get().uri(uri -> uri.path("/getQuery")
+                        .queryParam("uuid", analystOnly.getUuid()).build())
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken)
+                .exchange()
+                .expectStatus().isForbidden();
+    }
+
+    /**
+     * The /getQuery endpoint requires authentication (a valid
+     * bearer token); without it the SecurityConfig
+     * {@code .authenticated()} rule rejects the request.
+     */
+    @Test
+    void getQueryRejectsAnonymous() {
+        client.get().uri("/getQuery?uuid=does-not-matter")
+                .exchange()
+                .expectStatus().isForbidden();
+    }
+
+    /**
+     * Same shape as {@link #getQueryEndpointRequiresRoleBindingUnlessPublic}
+     * but for /getWrite. Writes are never public, so the only
+     * positive case is "caller has a bound role".
+     */
+    @Test
+    void getWriteEndpointRequiresRoleBinding() throws Exception {
+        com.co.eurekatic.common.entity.WriteDefinition wd =
+                seedWriteDefinition("wd-admin", com.co.eurekatic.common.entity.WriteType.INSERT,
+                        "users", "[\"id\",\"name\"]", "[\"id\"]", "ADMIN");
+
+        // Alice has USER — not ADMIN — so the role check
+        // inside WriteCatalogService must reject her.
+        String userToken = tokenFor("alice", "USER");
+        client.get().uri(uri -> uri.path("/getWrite")
+                        .queryParam("uuid", wd.getUuid()).build())
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken)
+                .exchange()
+                .expectStatus().isForbidden();
+
+        // Root has ADMIN — the bound role matches.
+        String adminToken = tokenFor("root", "ADMIN");
+        client.get().uri(uri -> uri.path("/getWrite")
+                        .queryParam("uuid", wd.getUuid()).build())
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(jsonBody(b -> {
+                    assertThat(b.get("uuid").asText()).isEqualTo(wd.getUuid());
+                    assertThat(b.get("tableName").asText()).isEqualTo("users");
+                    assertThat(b.get("columns").isArray()).isTrue();
+                    assertThat(b.get("keyColumns").isArray()).isTrue();
+                }));
     }
 
     /* ====================== helpers ====================== */
-
-    private String url(String path) {
-        return "http://localhost:" + port + path;
-    }
 
     private String tokenFor(String username, String... roles) {
         Set<String> roleSet = new LinkedHashSet<>(List.of(roles));
         return jwtService.issueAccessToken(username, roleSet);
     }
 
-    private HttpHeaders jsonHeadersWith(String token) {
-        HttpHeaders h = new HttpHeaders();
-        h.setContentType(MediaType.APPLICATION_JSON);
-        h.setBearerAuth(token);
-        return h;
+    /**
+     * Persists a {@link com.co.eurekatic.common.entity.Query}
+     * with one role binding. Returns the saved entity (with
+     * its generated UUID).
+     */
+    private com.co.eurekatic.common.entity.Query seedQuery(
+            String uuid, String sql, boolean publicEnd, String roleName) {
+        Role role = roleRepository.findByName(roleName).orElseGet(() -> {
+            Role r = new Role(roleName, roleName);
+            roleRepository.save(r);
+            return r;
+        });
+        com.co.eurekatic.common.entity.Query q = new com.co.eurekatic.common.entity.Query();
+        q.setUuid(uuid);
+        q.setQuery(sql);
+        q.setType("SQL");
+        q.setPublicEnd(publicEnd);
+        q.setCaptcha(false);
+        q.addRole(role);
+        return queryRepository.save(q);
     }
+
+    /**
+     * Persists a {@link com.co.eurekatic.common.entity.WriteDefinition}
+     * with one role binding. Returns the saved entity.
+     */
+    private com.co.eurekatic.common.entity.WriteDefinition seedWriteDefinition(
+            String uuid,
+            com.co.eurekatic.common.entity.WriteType type,
+            String tableName,
+            String columnsJson,
+            String keyColumnsJson,
+            String roleName) {
+        Role role = roleRepository.findByName(roleName).orElseGet(() -> {
+            Role r = new Role(roleName, roleName);
+            roleRepository.save(r);
+            return r;
+        });
+        com.co.eurekatic.common.entity.WriteDefinition w = new com.co.eurekatic.common.entity.WriteDefinition();
+        w.setUuid(uuid);
+        w.setWriteType(type);
+        w.setTableName(tableName);
+        w.setColumns(columnsJson);
+        w.setKeyColumns(keyColumnsJson);
+        w.addRole(role);
+        return writeDefinitionRepository.save(w);
+    }
+
+    /**
+     * Parses the response body bytes as JSON and feeds the
+     * resulting {@link JsonNode} to {@code assertion}. Wraps
+     * any {@link java.io.IOException} thrown by Jackson as an
+     * unchecked exception so the lambda body stays a clean
+     * {@code Consumer<byte[]>} (WebTestClient lambdas can't
+     * throw checked exceptions).
+     */
+    private Consumer<byte[]> jsonBody(Consumer<JsonNode> assertion) {
+        return body -> {
+            try {
+                assertion.accept(mapper.readTree(body));
+            } catch (java.io.IOException e) {
+                throw new RuntimeException("Failed to parse response JSON", e);
+            }
+        };
+    }
+
+    @SuppressWarnings("unused") // referenced from Javadoc only
+    private static final Consumer<JsonNode> TYPE_KEEP = n -> {};
 }

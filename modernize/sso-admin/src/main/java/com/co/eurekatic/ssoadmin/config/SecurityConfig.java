@@ -33,6 +33,16 @@ import java.util.List;
  * <ul>
  *   <li>{@code OPTIONS /**} — CORS preflight.</li>
  *   <li>{@code /actuator/health} and {@code /actuator/info} — health probes.</li>
+ *   <li>{@code /getQuery} and {@code /getWrite} — the consumer-facing
+ *       catalog endpoints called by {@code query-service}. Authenticated
+ *       callers only (a valid JWT must be present), but NO
+ *       {@code ROLE_ADMIN} gate — per-row authorization (the role
+ *       intersection against the catalog row) is enforced inside
+ *       {@link com.co.eurekatic.ssoadmin.service.QueryCatalogService}
+ *       and {@link com.co.eurekatic.ssoadmin.service.WriteCatalogService}.
+ *       We use {@code .authenticated()} (not {@code permitAll()}) so an
+ *       anonymous request is rejected with 401, not 403 — the 401 is
+ *       the correct hint that the caller should send credentials.</li>
  * </ul>
  *
  * <p>{@code /activateAccount} is technically public on the
@@ -69,6 +79,12 @@ public class SecurityConfig {
                         // Health probes.
                         .requestMatchers("/actuator/health", "/actuator/health/**",
                                 "/actuator/info").permitAll()
+                        // Catalog read endpoints — any
+                        // authenticated caller; the per-row
+                        // role check happens inside the
+                        // service. Anonymous → 401, authorized
+                        // → 200, wrong-role → 403.
+                        .requestMatchers("/getQuery", "/getWrite").authenticated()
                         // Everything else requires ADMIN.
                         .anyRequest().hasRole("ADMIN"))
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
