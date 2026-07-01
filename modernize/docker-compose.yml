@@ -213,8 +213,13 @@ services:
     image: eurekatic/sso-admin:1.0.0-SNAPSHOT
     container_name: sso-admin
     restart: unless-stopped
-    mem_limit: 1500m
-    mem_reservation: 1g
+    # Bumped to 3g after JVM 25 + Spring Boot 4 + Spring Cloud
+    # 2025.1.x exceeded 1.5g during startup under steady traffic
+    # (Hibernate schema-validate + Eureka lease renewal + first
+    # POST to /microservice/save all converge in the same window).
+    # The earlier 1.5g caused exit 137 OOM kills in a loop.
+    mem_limit: 3g
+    mem_reservation: 2g
     depends_on:
       postgres:
         condition: service_healthy
@@ -431,7 +436,9 @@ services:
       # compose default network (or the operator's custom
       # network name) so DNS resolution of eurekaserver,
       # postgres, etc. works inside the new container.
-      DOCKER_NETWORK: sso_postgres_modernize_default
+      # Uses the project name so `-p <other>` overrides it
+      # without editing this file.
+      DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-modernize}_default
       # Image name the new containers are started from.
       DOCKER_IMAGE: eurekatic/query-service:1.0.0-SNAPSHOT
       # Service-name DNS for Eureka. The query-service
