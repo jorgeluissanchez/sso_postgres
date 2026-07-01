@@ -9,6 +9,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.JoinTable;
 import jakarta.persistence.ManyToMany;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -126,6 +127,19 @@ public class Query {
      */
     @Column(name = "CREATEDDATE", insertable = false, updatable = false)
     private LocalDateTime createdDate;
+
+    /**
+     * Which {@link Microservice} instance (kind=QUERY) owns
+     * this query. Nullable — a {@code NULL} value means the
+     * query is "global" and any instance with the right
+     * datasource may serve it. The admin-ui Queries Catalog
+     * uses this to group queries by backing instance and to
+     * pick the right {@code query-service-<instanceName>}
+     * gateway path when executing.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "MICROSERVICE_ID")
+    private Microservice microservice;
 
     /**
      * Roles authorized to invoke this query through the catalog
