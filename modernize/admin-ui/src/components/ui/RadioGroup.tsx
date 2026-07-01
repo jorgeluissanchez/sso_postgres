@@ -36,6 +36,7 @@ export interface RadioGroupProps<T extends string> {
   error?: string | undefined;
   hint?: string | undefined;
   required?: boolean;
+  id?: string | undefined;
 }
 
 export const RadioGroup = forwardRef<HTMLFieldSetElement, RadioGroupProps<string>>(

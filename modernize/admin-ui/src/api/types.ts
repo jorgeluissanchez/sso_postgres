@@ -244,6 +244,60 @@ export interface RouteRoleChecked {
   checked: boolean;
 }
 
+// ====================== sso-admin / query catalog ======================
+
+/**
+ * Read-side wire shape for {@code GET /sso-admin/myQueries} and
+ * {@code GET /sso-admin/getQuery?uuid=...}. Mirrors the backend
+ * {@code QueryDefinition} record. The JSON keys line up with the
+ * legacy uppercase column names so the legacy low-code client
+ * keeps parsing the same shape.
+ *
+ * `microserviceId` is NEW — it tells the UI which
+ * `query-service-<instanceName>` gateway path to call when
+ * executing the query. `null` means "global" (no specific
+ * instance binding); the UI falls back to the legacy canonical
+ * `query-service` service id in that case.
+ */
+export interface QueryDefinition {
+  idQuery: number;
+  uuid: string;
+  query: string;
+  type: string | null;
+  publicEnd: boolean;
+  captcha: boolean;
+  detail: string | null;
+  action: string | null;
+  style: string | null;
+  microserviceId: number | null;
+}
+
+/** Value type for a query parameter. query-service forwards
+ *  these as `MapSqlParameterSource` bindings — strings, numbers,
+ *  booleans, and null are all supported; the JDBC driver handles
+ *  the SQL type mapping. */
+export type QueryParamValue = string | number | boolean | null;
+
+/**
+ * Body of {@code POST /query-service-<instance>/query}. The
+ * service returns a list of objects keyed by JDBC column label
+ * — the order is preserved by Jackson's `LinkedHashMap` on the
+ * server side and rendered as a generic table client-side.
+ */
+export interface QueryExecutionRequest {
+  uuid: string;
+  params: Record<string, QueryParamValue>;
+  limit?: number;
+  offset?: number;
+}
+
+/** Rows returned by query-service. Each row is an object whose
+ *  keys are the JDBC column labels and whose values are whatever
+ *  `rs.getObject(i)` produced (numbers, strings, dates, possibly
+ *  null). The UI renders them with `String(...)` and a null
+ *  placeholder. */
+export type QueryExecutionResponse = Array<Record<string, unknown>>;
+
 // ====================== error envelope ======================
 
 export interface ErrorResponse {

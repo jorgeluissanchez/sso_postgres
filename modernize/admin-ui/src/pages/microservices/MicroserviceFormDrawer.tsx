@@ -88,17 +88,14 @@ export function MicroserviceFormDrawer({
         onSubmit={async (values) => {
           // Strip QUERY-only fields when the kind is REST so
           // we don't accidentally round-trip empty strings
-          // for REST rows.
-          const payload = values.kind === "QUERY"
-            ? values
-            : {
-                serviceId: values.serviceId,
-                description: values.description,
-                requestUri: values.requestUri,
-                targetUriPath: values.targetUriPath,
-                targetUrlHost: values.targetUrlHost,
-                targetUrlPort: values.targetUrlPort,
-              };
+          // for REST rows. The spread preserves the
+          // MicroserviceFormValues shape (the QUERY fields
+          // stay as empty strings, which the backend's
+          // .optional() chain tolerates).
+          const payload: MicroserviceFormValues =
+            values.kind === "QUERY"
+              ? values
+              : { ...values, kind: "REST" as const };
           await onSubmit(microservice ? { id: microservice.id, ...payload } : payload);
         }}
         onCancel={onClose}
@@ -110,7 +107,7 @@ export function MicroserviceFormDrawer({
               name="kind"
               label="Tipo de microservicio"
               value={values.kind}
-              onChange={(v) => setField("kind", v)}
+              onChange={(v) => setField("kind", v as "REST" | "QUERY")}
               error={errors.kind}
               options={[
                 {
@@ -260,7 +257,7 @@ function DialectSelect({
 }: {
   value: string;
   onChange: (v: string) => void;
-  error?: string;
+  error?: string | undefined;
 }) {
   const id = `dialect-${Math.random().toString(36).slice(2)}`;
   return (

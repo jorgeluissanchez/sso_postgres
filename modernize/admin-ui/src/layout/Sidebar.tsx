@@ -6,6 +6,7 @@ const items = [
   { to: "/admin/groups", label: "Grupos" },
   { to: "/admin/microservices", label: "Microservicios" },
   { to: "/admin/query-services", label: "Query Services" },
+  { to: "/admin/queries", label: "Queries Catalog" },
   { to: "/admin/endpoints", label: "Endpoints" },
   { to: "/admin/routes", label: "Rutas" },
 ];

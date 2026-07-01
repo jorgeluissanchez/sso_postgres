@@ -118,3 +118,22 @@ export type GroupFormValues = z.infer<typeof groupFormSchema>;
 export type MicroserviceFormValues = z.infer<typeof microserviceFormSchema>;
 export type EndpointFormValues = z.infer<typeof endpointFormSchema>;
 export type RouteFormValues = z.infer<typeof routeFormSchema>;
+
+/**
+ * Loose schema for the parameter bag sent to query-service's
+ * {@code POST /query}. The service forwards each value via
+ * {@code MapSqlParameterSource}, so the runtime SQL type
+ * depends on the JDBC driver — the schema accepts the union
+ * (string | number | boolean | null) that covers every type
+ * `rs.getObject(i)` can return for a parameter binding.
+ *
+ * <p>No `superRefine` here — the v1 auto-parse generates one
+ * input per `:placeholder`, so each field is validated when
+ * the user types into it (the input is a free-form string,
+ * which is what `MapSqlParameterSource` wants).
+ */
+export const queryParamSchema = z.record(
+  z.string(),
+  z.union([z.string(), z.number(), z.boolean(), z.null()]),
+);
+export type QueryParams = z.infer<typeof queryParamSchema>;

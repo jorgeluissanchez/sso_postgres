@@ -20,6 +20,9 @@ import type {
   LoginRequest,
   MicroserviceRequest,
   MicroserviceResponse,
+  QueryDefinition,
+  QueryExecutionRequest,
+  QueryExecutionResponse,
   RoleRequest,
   RoleResponse,
   RouteRequest,
@@ -152,4 +155,43 @@ export const routesApi = {
     apiClient.delete<void>(`/sso-admin/route/${id}/role/${roleId}`),
   getRolesChecked: (id: number) =>
     apiClient.get<RouteRoleChecked[]>(`/sso-admin/route/${id}/roles/checked`),
+};
+
+/* ====================== queries catalog (consumer-facing) ======================
+ *
+ * Two surfaces:
+ *
+ *  - `listForInstance` — consumer-facing catalog list via
+ *    /sso-admin/myQueries (authenticated, per-row role
+ *    authorization). The admin CRUD surface is /query/getQueries
+ *    and is gated by ROLE_ADMIN; we deliberately do not call
+ *    it here.
+ *
+ *  - `execute` — POST directly to the query-service instance
+ *    backing the chosen microservice. The path is
+ *    /<serviceId>/query (NO /api prefix) because the gateway's
+ *    dynamic discovery locator exposes /<svcId>/** without it.
+ *    The apiClient `base: ""` override skips VITE_API_BASE; the
+ *    JWT travels in Authorization, the gateway forwards it.
+ */
+export const queriesApi = {
+  listForInstance: (microserviceId: number | null) =>
+    apiClient.get<QueryDefinition[]>(
+      microserviceId == null
+        ? "/sso-admin/myQueries"
+        : `/sso-admin/myQueries?microserviceId=${microserviceId}`,
+    ),
+
+  execute: (instanceName: string | null, body: QueryExecutionRequest) => {
+    // instanceName === null is the legacy single-instance case
+    // (the canonical "query-service" service id registered with
+    // Eureka, NOT "query-service-postgres" — see
+    // query-service's InstanceNameResolver).
+    const serviceId = instanceName ? `query-service-${instanceName}` : "query-service";
+    return apiClient.post<QueryExecutionResponse>(
+      `/${serviceId}/query`,
+      body,
+      { base: "" },
+    );
+  },
 };
