@@ -17,12 +17,23 @@ spring:
   # creates a phantom "primary" DataSource with an H2
   # in-memory default URL (the test classpath has H2),
   # which then conflicts with our Map<String, DataSource>.
+  #
+  # NOTE — Spring Boot 4 package moves: the autoconfig
+  # classes relocated from `...autoconfigure.jdbc.*` and
+  # `...autoconfigure.orm.jpa.*` (Boot 3) into the
+  # dedicated `spring-boot-jdbc` and `spring-boot-hibernate`
+  # modules. The Boot 3 paths below are NO-OPs in Boot 4 —
+  # autoconfig still runs and tries to wire a phantom
+  # DataSource, which fails with
+  # "Failed to determine a suitable driver class" because
+  # the container has no JDBC URL property binding. The
+  # Boot 4 fully-qualified class names are listed below.
   autoconfigure:
     exclude:
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
-      - org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration
-      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceTransactionManagerAutoConfiguration
+      - org.springframework.boot.jdbc.autoconfigure.JdbcTemplateAutoConfiguration
+      - org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration
 
 eureka:
   client:
