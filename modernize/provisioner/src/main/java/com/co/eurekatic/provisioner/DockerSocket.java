@@ -308,6 +308,13 @@ public class DockerSocket {
         // matching route.
         List<String> env = new ArrayList<>();
         env.add("QUERY_DS_DIALECT=" + req.dialect());
+        // Instance-mode env vars (bound by query-service's
+        // InstanceProps @ConfigurationProperties(prefix = "query.ds")).
+        // When QUERY_DS_DIALECT is set, DataSourceConfig runs
+        // in INSTANCE mode and reads these — the YAML's
+        // QUERY_DS_POSTGRES_* are only read in STATIC mode
+        // (no dialect env). See query-service's
+        // InstanceProps.java javadoc for the full mapping.
         env.add("QUERY_DS_URL=" + req.jdbcUrl());
         env.add("QUERY_DS_USERNAME=" + req.dbUsername());
         if (req.dbPassword() != null) {

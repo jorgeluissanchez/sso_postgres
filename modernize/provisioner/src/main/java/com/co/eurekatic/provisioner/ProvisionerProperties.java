@@ -23,7 +23,7 @@ public class ProvisionerProperties {
      *  the same network eureka / sso-admin live on, so the
      *  container can register its Eureka heartbeat via
      *  service-name DNS. */
-    private String network = "sso_postgres_modernize_default";
+    private String network = "modernize_default";
 
     /** Path inside THIS container where the host docker
      *  socket is bind-mounted (see docker-compose.yml). */
