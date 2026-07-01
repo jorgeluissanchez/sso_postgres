@@ -84,7 +84,13 @@ public class SecurityConfig {
                         // role check happens inside the
                         // service. Anonymous → 401, authorized
                         // → 200, wrong-role → 403.
-                        .requestMatchers("/getQuery", "/getWrite").authenticated()
+                        //
+                        // /myQueries is the list endpoint consumed
+                        // by the admin-ui Queries Catalog page; it
+                        // is also per-row authorized (ADMIN
+                        // bypass + publicEnd bypass + role
+                        // intersection), same as /getQuery.
+                        .requestMatchers("/getQuery", "/getWrite", "/myQueries").authenticated()
                         // Everything else requires ADMIN.
                         .anyRequest().hasRole("ADMIN"))
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)

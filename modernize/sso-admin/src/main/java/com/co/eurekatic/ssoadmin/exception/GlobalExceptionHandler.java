@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -47,6 +48,21 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NotFoundException.class)
     public ResponseEntity<Map<String, Object>> handleNotFound(NotFoundException ex) {
         return error(HttpStatus.NOT_FOUND, "NOT_FOUND", ex.getMessage());
+    }
+
+    /**
+     * Catalog endpoints ({@code /getQuery}, {@code /myQueries})
+     * throw {@link AccessDeniedException} when the per-row role
+     * check rejects a caller. The Spring Security filter chain
+     * maps these to 403 already when the chain is present, but
+     * the standalone MockMvc setup (and any future programmatic
+     * caller that bypasses the filter) needs an explicit handler
+     * so the response shape stays consistent with the rest of
+     * the API.
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<Map<String, Object>> handleAccessDenied(AccessDeniedException ex) {
+        return error(HttpStatus.FORBIDDEN, "FORBIDDEN", ex.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

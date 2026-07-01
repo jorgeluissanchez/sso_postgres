@@ -11,34 +11,36 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
- * Consumer-facing read endpoint for the query catalog.
- * Consumed by {@code query-service} via {@code CatalogClient}.
+ * Consumer-facing read endpoints for the query catalog.
  *
- * <p>Distinct from {@link QueryAdminController}:
+ * <p>Two surfaces:
  * <ul>
- *   <li>{@code /getQuery} is the read endpoint that downstream
- *       services call to resolve a {@code uuid} into a usable
- *       SQL string with metadata. Authenticated callers with
- *       at least one role bound to the query (or a
- *       {@code publicEnd} query) get a 200; everyone else gets
- *       a 403 — including the case where the uuid does not
- *       exist. We deliberately do not distinguish "missing"
- *       from "forbidden" so the catalog is not a discovery
- *       service.</li>
- *   <li>{@code /query/**} (admin) is gated by {@code ROLE_ADMIN}
- *       and is used by the admin UI to manage the catalog rows.</li>
+ *   <li>{@code GET /getQuery?uuid=...} — consumed by
+ *       {@code query-service} via {@code CatalogClient} to
+ *       resolve a single uuid into a usable SQL string with
+ *       metadata. Per-row auth; 404 and 403 conflated to avoid
+ *       making the catalog a discovery service.</li>
+ *   <li>{@code GET /myQueries?microserviceId=...} — consumed by
+ *       the admin-ui Queries Catalog page. Returns every query
+ *       the caller is authorized to see, optionally filtered by
+ *       the backing microservice instance. Empty list is a 200
+ *       (not a 403) — the endpoint answers "what can I see?"
+ *       and "nothing" is a legitimate answer.</li>
  * </ul>
+ *
+ * <p>Both are distinct from {@link QueryAdminController}, which is
+ * gated by {@code ROLE_ADMIN} and used by the admin UI to manage
+ * the catalog rows (CRUD + role bindings).
  *
  * <p>Username comes from the {@link AuthPrincipal} already in the
  * {@link SecurityContextHolder}, which the
  * {@code JwtAuthenticationFilter} populates before this handler
  * runs. We don't re-parse the JWT here — the gateway has
  * already validated the signature when the access token was
- * issued. The filter chain only requires the token to be
- * syntactically valid (parseable) here; if the gateway is
- * bypassed, signature verification is the caller's problem
- * and we let the role check above reject them anyway.
+ * issued.
  */
 @RestController
 public class QueryCatalogController {
@@ -55,12 +57,25 @@ public class QueryCatalogController {
         return ResponseEntity.ok(service.resolve(uuid, username));
     }
 
+    /**
+     * Lists the queries the caller is authorized to see, optionally
+     * filtered by {@code microserviceId} (the {@code MICROSERVICE.ID}
+     * — not the {@code serviceId} string). When the filter is
+     * omitted, queries with no instance binding ("global" queries)
+     * are returned as well; the admin-ui uses the {@code null}
+     * value to mean "Todas las instancias".
+     */
+    @GetMapping("/myQueries")
+    public List<QueryDefinition> myQueries(@RequestParam(required = false) Long microserviceId) {
+        return service.listForCaller(currentUsername(), microserviceId);
+    }
+
     private static String currentUsername() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !(auth.getPrincipal() instanceof AuthPrincipal principal)) {
             // Should never happen — SecurityConfig marks
-            // /getQuery as authenticated. Falling back to
-            // AccessDeniedException here keeps the failure
+            // /getQuery and /myQueries as authenticated. Falling
+            // back to AccessDeniedException here keeps the failure
             // mode consistent with the role check below.
             throw new AccessDeniedException("No autenticado");
         }

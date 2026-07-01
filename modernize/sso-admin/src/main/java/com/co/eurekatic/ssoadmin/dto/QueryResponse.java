@@ -1,5 +1,6 @@
 package com.co.eurekatic.ssoadmin.dto;
 
+import com.co.eurekatic.common.entity.Microservice;
 import com.co.eurekatic.common.entity.Query;
 
 import java.time.LocalDateTime;
@@ -16,6 +17,13 @@ import java.util.stream.Collectors;
  * <p>{@code createdDate} is the DB-managed timestamp
  * (insertable=false, updatable=false on the entity). We surface
  * it for the admin UI; {@code query-service} ignores it.
+ *
+ * <p>{@code microserviceId} identifies the {@code query-service-<instance>}
+ * that owns this query. Surfaced for the admin CRUD form so
+ * operators can re-bind a query to a different instance without
+ * writing SQL. The admin form does not yet expose this field
+ * directly (server-managed for MVP) but the DTO carries it so
+ * a follow-up form change is a small edit.
  */
 public record QueryResponse(
         Long id,
@@ -28,9 +36,11 @@ public record QueryResponse(
         String action,
         String style,
         LocalDateTime createdDate,
-        Set<Long> roleIds
+        Set<Long> roleIds,
+        Long microserviceId
 ) {
     public static QueryResponse fromEntity(Query q) {
+        Microservice m = q.getMicroservice();
         return new QueryResponse(
                 q.getId(),
                 q.getUuid(),
@@ -44,6 +54,7 @@ public record QueryResponse(
                 q.getCreatedDate(),
                 q.getRoles().stream()
                         .map(com.co.eurekatic.common.entity.Role::getId)
-                        .collect(Collectors.toCollection(LinkedHashSet::new)));
+                        .collect(Collectors.toCollection(LinkedHashSet::new)),
+                m != null ? m.getId() : null);
     }
 }
