@@ -35,6 +35,8 @@ COPY auth-center/pom.xml auth-center/
 COPY api-gateway/pom.xml api-gateway/
 COPY hello-service/pom.xml hello-service/
 COPY sso-admin/pom.xml sso-admin/
+COPY query-service/pom.xml query-service/
+COPY provisioner/pom.xml provisioner/
 
 RUN mvn -B -ntp -pl api-gateway -am dependency:go-offline -q
 
