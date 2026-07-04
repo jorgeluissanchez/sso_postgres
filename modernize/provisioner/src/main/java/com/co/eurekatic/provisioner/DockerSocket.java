@@ -58,15 +58,26 @@ public class DockerSocket {
         // listing image, env, network on create (we attach
         // the container to the same compose network that
         // sso-admin lives on so service-name DNS works).
+        //
+        // ExposedPorts documents that the container listens
+        // on 8084 inside the network; we DO NOT bind that to
+        // a host port. Bind-to-host only makes sense for the
+        // SINGLE canonical query-service-postgres in dev.
+        // Every kind=QUERY instance is reached through the
+        // gateway by its Docker DNS name
+        // (`query-service-<instanceName>`), which Eureka
+        // service-id equals, so no host port mapping is
+        // needed. Mapping here would also collide: every
+        // container asks for the same HostPort=8084 and
+        // only the first one to come up wins, leaving the
+        // rest stuck in "Created" with no recourse.
         String createBody = mapper.writeValueAsString(Map.of(
                 "Image", props.getImage(),
                 "Env", buildEnv(req),
                 "ExposedPorts", Map.of("8084/tcp", Map.of()),
                 "HostConfig", Map.of(
                         "NetworkMode", props.getNetwork(),
-                        "RestartPolicy", Map.of("Name", "unless-stopped"),
-                        "PortBindings", Map.of(
-                                "8084/tcp", List.of(Map.of("HostPort", "8084"))))));
+                        "RestartPolicy", Map.of("Name", "unless-stopped"))));
 
         JsonNode createResp = exec(List.of(
                 "curl", "-sS", "-X", "POST",
