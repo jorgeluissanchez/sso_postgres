@@ -35,9 +35,32 @@ export default defineConfig({
             },
         },
     },
+    preview: {
+        // `npm run preview` serves the production build (dist/) on
+        // :4173. Without this proxy the SPA's /api/* calls would hit
+        // :4173/api/* and 404 (Vite preview has no built-in proxy
+        // outside of `server`). Adding the same forward as dev keeps
+        // the prod-bundle testable locally without rebuilding the
+        // gateway image each time you tweak the SPA.
+        port: 4173,
+        proxy: {
+            "/api": {
+                target: "http://localhost:8080",
+                changeOrigin: false,
+                secure: false,
+            },
+        },
+    },
     build: {
         outDir: "dist",
-        sourcemap: true,
+        // Sourcemaps are dev artifacts. Keeping them OFF in the
+        // production build saves ~1.3 MB in the api-gateway jar
+        // (the SPA's `dist/` is copied into the jar's resources
+        // before `mvn package`; sourcemaps would otherwise ship
+        // inside the fat jar with no consumer). For debugging
+        // production minified bundles, run a local dev server
+        // (`npm run dev`) and use the browser devtools there.
+        sourcemap: false,
         target: "es2022",
     },
     test: {

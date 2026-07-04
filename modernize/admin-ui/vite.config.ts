@@ -36,6 +36,22 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    // `npm run preview` serves the production build (dist/) on
+    // :4173. Without this proxy the SPA's /api/* calls would hit
+    // :4173/api/* and 404 (Vite preview has no built-in proxy
+    // outside of `server`). Adding the same forward as dev keeps
+    // the prod-bundle testable locally without rebuilding the
+    // gateway image each time you tweak the SPA.
+    port: 4173,
+    proxy: {
+      "/api": {
+        target: "http://localhost:8080",
+        changeOrigin: false,
+        secure: false,
+      },
+    },
+  },
   build: {
     outDir: "dist",
     // Sourcemaps are dev artifacts. Keeping them OFF in the
