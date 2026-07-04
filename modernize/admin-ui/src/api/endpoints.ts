@@ -22,9 +22,12 @@ import type {
   MicroserviceResponse,
   MicroserviceTestConnectionRequest,
   MicroserviceTestConnectionResponse,
+  QueryAdminRequest,
+  QueryAdminResponse,
   QueryDefinition,
   QueryExecutionRequest,
   QueryExecutionResponse,
+  QueryRoleChecked,
   RoleRequest,
   RoleResponse,
   RouteRequest,
@@ -187,6 +190,29 @@ export const routesApi = {
  *    The apiClient `base: ""` override skips VITE_API_BASE; the
  *    JWT travels in Authorization, the gateway forwards it.
  */
+/* ====================== queries admin CRUD ======================
+ *
+ * Distinct from the consumer-side myQueries/execute pair above.
+ * The admin surface is /query/getQueries (ADMIN-gated) and is what
+ * the Queries Catalog admin page uses for list/create/update/delete
+ * plus the role-binding endpoints. Bound to a kind=QUERY microservice
+ * by sending microserviceId in the body.
+ */
+export const queryAdminApi = {
+  list: () => apiClient.get<QueryAdminResponse[]>("/sso-admin/query/getQueries"),
+  create: (body: QueryAdminRequest) =>
+    apiClient.post<QueryAdminResponse>("/sso-admin/query/save", body),
+  update: (body: QueryAdminRequest) =>
+    apiClient.put<QueryAdminResponse>("/sso-admin/query/update", body),
+  delete: (id: number) => apiClient.delete<void>(`/sso-admin/query/${id}`),
+  bindRole: (id: number, roleId: number) =>
+    apiClient.post<void>(`/sso-admin/query/${id}/role/${roleId}`),
+  unbindRole: (id: number, roleId: number) =>
+    apiClient.delete<void>(`/sso-admin/query/${id}/role/${roleId}`),
+  getRolesChecked: (id: number) =>
+    apiClient.get<QueryRoleChecked[]>(`/sso-admin/query/${id}/roles/checked`),
+};
+
 export const queriesApi = {
   listForInstance: (microserviceId: number | null) =>
     apiClient.get<QueryDefinition[]>(

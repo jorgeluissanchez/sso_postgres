@@ -298,6 +298,55 @@ export interface QueryDefinition {
   microserviceId: number | null;
 }
 
+/** Admin CRUD request for the catalog. Mirrors
+ *  {@code QueryRequest} on the backend, including
+ *  {@code microserviceId} which binds the query to a
+ *  {@code query-service-<instance>} container. Sending
+ *  {@code null} / omitting the field clears the binding (the
+ *  query becomes "global" — any QUERY instance with the right
+ *  datasource may serve it). The service rejects non-null ids
+ *  that don't resolve to a {@code kind=QUERY} row with 422. */
+export interface QueryAdminRequest {
+  id?: number;
+  uuid: string;
+  query: string;
+  type?: string | null;
+  publicEnd: boolean;
+  captcha: boolean;
+  detail?: string | null;
+  action?: string | null;
+  style?: string | null;
+  microserviceId?: number | null;
+}
+
+/** Admin CRUD response shape — mirrors {@code QueryResponse}
+ *  on the backend. Distinct from {@link QueryDefinition}
+ *  (the catalog/consumer shape) so the admin UI doesn't load
+ *  the role-bindings endpoint separately; the id, roleIds, and
+ *  microserviceId live here. */
+export interface QueryAdminResponse {
+  id: number;
+  uuid: string;
+  query: string;
+  type: string | null;
+  publicEnd: boolean;
+  captcha: boolean;
+  detail: string | null;
+  action: string | null;
+  style: string | null;
+  createdDate: string | null;
+  roleIds: number[];
+  microserviceId: number | null;
+}
+
+/** Per-row role binding checkbox list — mirrors
+ *  {@code QueryAdminService.RoleChecked}. */
+export interface QueryRoleChecked {
+  roleId: number;
+  name: string;
+  checked: boolean;
+}
+
 /** Value type for a query parameter. query-service forwards
  *  these as `MapSqlParameterSource` bindings — strings, numbers,
  *  booleans, and null are all supported; the JDBC driver handles

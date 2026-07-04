@@ -112,12 +112,61 @@ export const routeFormSchema = z.object({
   idParent: z.number().int().nullable().default(null),
 });
 
+/**
+ * Schema for the Queries Catalog admin form. The two
+ * cross-field checks worth noting:
+ * <ul>
+ *   <li>{@code type} is optional, but admins sometimes paste
+ *       a "SELECT" / "CHART" label here — keep it short and
+ *       free-form; the backend will echo whatever is sent
+ *       back to the consumer.</li>
+ *   <li>{@code microserviceId} is null by default (query
+ *       stays "global", canonical {@code query-service}
+ *       serves it). Setting it requires picking a row out of
+ *       the QUERY microservice dropdown the page renders;
+ *       the schema accepts any positive integer, the form
+ *       coerces empty string to {@code null}.</li>
+ * </ul>
+ *
+ * <p>{@code query} (the SQL itself) is NOT validated for
+ * syntax — Bean Validation 400 from the backend covers
+ * malformed payloads, and trying to lint SQL here would just
+ * shadow whatever the JDBC driver ends up complaining about.
+ */
+export const queryFormSchema = z.object({
+  uuid: z
+    .string()
+    .min(2, "Mínimo 2 caracteres")
+    .max(64)
+    .regex(/^[a-zA-Z0-9_-]+$/, "Solo letras, números, _ y -"),
+  query: z.string().min(1, "Requerido").max(10_000),
+  type: z.string().max(64).default(""),
+  publicEnd: z.boolean().default(false),
+  captcha: z.boolean().default(false),
+  detail: z.string().max(20_000).default(""),
+  action: z.string().max(20_000).default(""),
+  style: z.string().max(20_000).default(""),
+  // Empty string from the <select> means "no binding"; coerce
+  // to null so the backend's resolveQueryMicroservice(null)
+  // path runs.
+  microserviceId: z
+    .union([z.string(), z.number(), z.null()])
+    .transform((v) => {
+      if (v === "" || v == null) return null;
+      const n = typeof v === "string" ? Number(v) : v;
+      return Number.isFinite(n) && n > 0 ? n : null;
+    })
+    .nullable()
+    .default(null),
+});
+
 export type UserFormValues = z.infer<typeof userFormSchema>;
 export type RoleFormValues = z.infer<typeof roleFormSchema>;
 export type GroupFormValues = z.infer<typeof groupFormSchema>;
 export type MicroserviceFormValues = z.infer<typeof microserviceFormSchema>;
 export type EndpointFormValues = z.infer<typeof endpointFormSchema>;
 export type RouteFormValues = z.infer<typeof routeFormSchema>;
+export type QueryFormValues = z.infer<typeof queryFormSchema>;
 
 /**
  * Loose schema for the parameter bag sent to query-service's
