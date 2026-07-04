@@ -147,6 +147,32 @@ export interface MicroserviceRequest {
   instanceName?: string | null;
 }
 
+/* ====================== testConnection probe ======================
+ *
+ * Payload/response for POST /sso-admin/microservice/testConnection.
+ * Used by the "Probar conexión" button in the microservice form
+ * drawer to validate the JDBC fields BEFORE saving. Dialect-agnostic
+ * — the backend opens the connection via DriverManager and runs
+ * Connection.isValid(5) with the configured driver. No DDL, no
+ * arbitrary SQL — this is a probe, not a SQL executor.
+ */
+export interface MicroserviceTestConnectionRequest {
+  jdbcUrl: string;
+  dbUsername: string;
+  dbPassword: string;
+  dialect?: string;
+}
+
+export interface MicroserviceTestConnectionResponse {
+  ok: boolean;
+  /** Sanitized, single-line message safe to display inline. */
+  message: string;
+  /** Probe latency in milliseconds; only meaningful when ok=true. */
+  latencyMs: number;
+  /** Echo of the dialect from the request; null on failure. */
+  dialect: string | null;
+}
+
 /* ====================== sso-admin / container status ======================
  *
  * Returned by GET /sso-admin/microservice/{id}/container/status.

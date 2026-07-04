@@ -1,6 +1,8 @@
 import { useMemo } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { Drawer } from "@/components/ui/Drawer";
 import { Input } from "@/components/ui/Input";
+import { Button } from "@/components/ui/Button";
 import { RadioGroup } from "@/components/ui/RadioGroup";
 import { Form, zodFieldErrors } from "@/components/forms/Form";
 import {
@@ -8,7 +10,12 @@ import {
   QUERY_DIALECTS,
   type MicroserviceFormValues,
 } from "@/schemas";
-import type { MicroserviceResponse } from "@/api/types";
+import type {
+  MicroserviceResponse,
+  MicroserviceTestConnectionRequest,
+  MicroserviceTestConnectionResponse,
+} from "@/api/types";
+import { microservicesApi } from "@/api/endpoints";
 
 interface Props {
   open: boolean;
@@ -60,6 +67,21 @@ export function MicroserviceFormDrawer({
     }),
     [microservice],
   );
+
+  // Sonda JDBC sin persistencia. Vive fuera del submit del
+  // Form — useMutation propio para que el ciclo de vida del
+  // banner sea independiente del "Crear/Guardar". El reset
+  // no es automático al editar campos: el usuario revalida
+  // cuando quiere haciendo click otra vez (decisión consciente
+  // — un banner persistente de "conectado" mientras edita es
+  // menos ruidoso que parpadear).
+  const testMutation = useMutation<
+    MicroserviceTestConnectionResponse,
+    Error,
+    MicroserviceTestConnectionRequest
+  >({
+    mutationFn: (body) => microservicesApi.testConnection(body),
+  });
 
   return (
     <Drawer
@@ -233,6 +255,61 @@ export function MicroserviceFormDrawer({
                     onChange={(e) => setField("poolSize", Number(e.target.value))}
                     error={errors.poolSize}
                   />
+                </div>
+                <div className="h-4" />
+                {/* Test-connection probe. Solo aparece cuando
+                    kind=QUERY (estamos en esta rama). El botón
+                    dispara el endpoint sin persistir nada — el
+                    banner inline muestra éxito/fallo y la
+                    latencia. type="button" para que no se
+                    confunda con el submit del Form. */}
+                <div className="flex items-start gap-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={!values.jdbcUrl || testMutation.isPending}
+                    loading={testMutation.isPending}
+                    onClick={() =>
+                      testMutation.mutate({
+                        jdbcUrl: values.jdbcUrl,
+                        dbUsername: values.dbUsername,
+                        dbPassword: values.dbPassword,
+                        dialect: values.dialect,
+                      })
+                    }
+                  >
+                    Probar conexión
+                  </Button>
+                  {testMutation.data && (
+                    <div
+                      role="status"
+                      className={`flex-1 rounded border px-3 py-2 text-sm ${
+                        testMutation.data.ok
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                          : "border-red-200 bg-red-50 text-red-800"
+                      }`}
+                    >
+                      <span aria-hidden="true">
+                        {testMutation.data.ok ? "✓ " : "✗ "}
+                      </span>
+                      {testMutation.data.message}
+                      {testMutation.data.ok && (
+                        <span className="ml-2 text-xs opacity-70">
+                          ({testMutation.data.latencyMs} ms)
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {testMutation.error && (
+                    <div
+                      role="alert"
+                      className="flex-1 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+                    >
+                      <span aria-hidden="true">✗ </span>
+                      {testMutation.error.message}
+                    </div>
+                  )}
                 </div>
               </>
             )}

@@ -20,6 +20,8 @@ import type {
   LoginRequest,
   MicroserviceRequest,
   MicroserviceResponse,
+  MicroserviceTestConnectionRequest,
+  MicroserviceTestConnectionResponse,
   QueryDefinition,
   QueryExecutionRequest,
   QueryExecutionResponse,
@@ -91,6 +93,17 @@ export const microservicesApi = {
   update: (body: MicroserviceRequest) =>
     apiClient.put<MicroserviceResponse>("/sso-admin/microservice/update", body),
   delete: (id: number) => apiClient.delete<void>(`/sso-admin/microservice/${id}`),
+  /**
+   * Probe-only: opens a JDBC connection with the given fields and
+   * reports success/failure. No persistence. Used by the "Probar
+   * conexión" button in the drawer to validate the JDBC block
+   * before submitting the create/update.
+   */
+  testConnection: (body: MicroserviceTestConnectionRequest) =>
+    apiClient.post<MicroserviceTestConnectionResponse>(
+      "/sso-admin/microservice/testConnection",
+      body,
+    ),
 };
 
 /* ====================== query-service container (provisioner-backed) ======================
