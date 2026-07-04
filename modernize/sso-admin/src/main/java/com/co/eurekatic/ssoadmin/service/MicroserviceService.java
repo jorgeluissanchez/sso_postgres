@@ -10,6 +10,7 @@ import com.co.eurekatic.ssoadmin.exception.DuplicateException;
 import com.co.eurekatic.ssoadmin.exception.NotFoundException;
 import com.co.eurekatic.ssoadmin.provisioner.ContainerProvisioner;
 import com.co.eurekatic.ssoadmin.provisioner.EurekaReadinessProbe;
+import com.co.eurekatic.ssoadmin.provisioner.ProvisioningException;
 import com.co.eurekatic.ssoadmin.provisioner.ProvisionSpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,7 +73,29 @@ public class MicroserviceService {
         this.readinessProbe = readinessProbe;
     }
 
-    @Transactional
+    /**
+     * Persist + provision for {@code kind=QUERY} rows.
+     *
+     * <p><b>Why not {@code @Transactional}:</b> the provisioning
+     * chain ({@code provisioner} + {@code readinessProbe}) can
+     * fail in ways unrelated to the DB row — most commonly an
+     * {@code EUREKA_TIMEOUT} from {@link EurekaReadinessProbe}
+     * when a fresh container takes longer than 45s to register.
+     * A surrounding transaction would treat that as a reason to
+     * discard the persisted row, leaving a {@code query-service-*}
+     * container running on the host with no DB record ("ghost
+     * container"). {@code Spring Data}'s
+     * {@code SimpleJpaRepository.save(...)} is itself annotated
+     * {@code @Transactional}, so removing the surrounding tx is
+     * safe — the INSERT commits as soon as {@code save()} returns.
+     *
+     * <p>The provisioning steps are best-effort: any
+     * {@link ProvisioningException} is logged at WARN and the
+     * call still returns the persisted row. Admin-ui can check
+     * container reachability via the existing
+     * {@code GET /microservice/{id}/container/status} endpoint
+     * and re-attempt provisioning manually if needed.
+     */
     public MicroserviceResponse create(MicroserviceRequest req) {
         if (repo.existsByServiceId(req.serviceId())) {
             throw new DuplicateException("Microservice", req.serviceId());
@@ -102,17 +125,36 @@ public class MicroserviceService {
         Microservice m = new Microservice();
         copy(req, m);
         m.setKind(kind);
+        // save() commits in its own @Transactional (Spring Data
+        // JPA). Even if the QUERY provisioning below throws and
+        // is caught, this row stays.
         Microservice saved = repo.save(m);
+        log.info("Persisted microservice id={} serviceId={} kind={}",
+                saved.getId(), saved.getServiceId(), saved.getKind());
 
         if ("QUERY".equals(kind)) {
-            // Provision first (container create is fast-fail), then
-            // wait for Eureka. If either fails the surrounding
-            // transaction rolls back and no orphan row is left —
-            // the ProvisioningException propagates to the
-            // controller's error handler.
-            String instanceId = req.instanceName() != null
-                    ? req.instanceName()
-                    : req.dialect();
+            provisionQueryBestEffort(req, saved);
+        }
+
+        return MicroserviceResponse.fromEntity(saved);
+    }
+
+    /**
+     * Best-effort provisioning for a freshly persisted QUERY
+     * row. Any {@link ProvisioningException} is caught and
+     * logged at WARN — the call site has already committed the
+     * DB row and should return success regardless. If the
+     * container later shows up in
+     * {@link ContainerProvisioner#status(String) status}, the
+     * admin sees it. If it never shows up, the admin can delete
+     * the row (which best-effort deprovisions the container
+     * too) and try again.
+     */
+    private void provisionQueryBestEffort(MicroserviceRequest req, Microservice saved) {
+        String instanceId = req.instanceName() != null
+                ? req.instanceName()
+                : req.dialect();
+        try {
             provisioner.provision(new ProvisionSpec(
                     instanceId,
                     req.dialect(),
@@ -123,9 +165,17 @@ public class MicroserviceService {
             readinessProbe.waitForInstance("query-service-" + instanceId);
             log.info("Provisioned query-service instance {} (dialect={})",
                     instanceId, req.dialect());
+        } catch (ProvisioningException pe) {
+            // Row stays. The container may or may not be running
+            // (depends on which step failed); the admin can
+            // check via /container/{id}/status and either wait
+            // it out or delete-and-retry.
+            log.warn("Row id={} was persisted but provisioning failed "
+                            + "(code={}, message={}); container '{}' may be left "
+                            + "running on the host. Admin can retry via delete+create.",
+                    saved.getId(), pe.getCode(), pe.getMessage(),
+                    "query-service-" + instanceId);
         }
-
-        return MicroserviceResponse.fromEntity(saved);
     }
 
     @Transactional
