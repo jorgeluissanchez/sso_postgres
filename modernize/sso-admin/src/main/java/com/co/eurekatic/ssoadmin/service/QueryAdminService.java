@@ -1,7 +1,9 @@
 package com.co.eurekatic.ssoadmin.service;
 
+import com.co.eurekatic.common.entity.Microservice;
 import com.co.eurekatic.common.entity.Query;
 import com.co.eurekatic.common.entity.Role;
+import com.co.eurekatic.common.repository.MicroserviceRepository;
 import com.co.eurekatic.common.repository.QueryRepository;
 import com.co.eurekatic.common.repository.RoleRepository;
 import com.co.eurekatic.ssoadmin.dto.QueryRequest;
@@ -27,16 +29,28 @@ import java.util.Set;
  * with {@link QueryRepository#existsByUuid} for a friendlier
  * 409; the DB-level {@code UQ_QUERY_UUID} constraint is the
  * real source of truth under concurrent inserts.
+ *
+ * <p>Microservice binding: a non-null
+ * {@link QueryRequest#microserviceId()} is resolved via
+ * {@link MicroserviceRepository#findById} and the lookup MUST
+ * yield a {@code kind=QUERY} row — REST rows have no container
+ * to serve the SQL, so binding a query to one is a user error
+ * we surface as 422 rather than letting the request pass and
+ * hit a runtime failure on the first {@code /query} call.
  */
 @Service
 public class QueryAdminService {
 
     private final QueryRepository queryRepo;
     private final RoleRepository roleRepo;
+    private final MicroserviceRepository microserviceRepo;
 
-    public QueryAdminService(QueryRepository queryRepo, RoleRepository roleRepo) {
+    public QueryAdminService(QueryRepository queryRepo,
+                             RoleRepository roleRepo,
+                             MicroserviceRepository microserviceRepo) {
         this.queryRepo = queryRepo;
         this.roleRepo = roleRepo;
+        this.microserviceRepo = microserviceRepo;
     }
 
     @Transactional
@@ -137,5 +151,37 @@ public class QueryAdminService {
         q.setDetail(req.detail());
         q.setAction(req.action());
         q.setStyle(req.style());
+        // Resolve microservice binding. Null clears the
+        // association (back to "global" — any instance may
+        // serve). A non-null id MUST resolve to a kind=QUERY
+        // row; binding a query to a REST row is meaningless
+        // because there is no container to execute the SQL.
+        // We throw 422 (Unprocessable) rather than 400 because
+        // the request itself is well-formed; the referenced
+        // entity is just wrong.
+        q.setMicroservice(resolveQueryMicroservice(req.microserviceId()));
+    }
+
+    /**
+     * Looks up the microservice referenced by the request,
+     * enforcing {@code kind=QUERY}. Returns {@code null} when
+     * the request passed {@code null} (clear binding / global).
+     *
+     * @throws IllegalArgumentException if the id is non-null
+     *         but does not exist, OR the row exists but is
+     *         not a QUERY kind. Both map to 422 INVALID_REQUEST.
+     */
+    private Microservice resolveQueryMicroservice(Long microserviceId) {
+        if (microserviceId == null) return null;
+        Microservice m = microserviceRepo.findById(microserviceId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "microserviceId " + microserviceId + " no existe"));
+        if (!"QUERY".equals(m.getKind())) {
+            throw new IllegalArgumentException(
+                    "microserviceId " + microserviceId
+                            + " es kind=" + m.getKind()
+                            + "; los queries solo se vinculan a kind=QUERY");
+        }
+        return m;
     }
 }

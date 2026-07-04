@@ -15,6 +15,15 @@ import jakarta.validation.constraints.Size;
  * admin UI is the only thing that knows their schema. The
  * catalog endpoint returns them verbatim, so whatever shape the
  * admin UI stores is what the low-code renderer sees.
+ *
+ * <p>{@code microserviceId} binds the query to a backing
+ * {@code query-service-<instance>} container. Nullable: a
+ * {@code null} value keeps the query "global" so any instance
+ * with the right datasource may serve it (legacy behavior,
+ * still useful for the canonical single-instance deployment).
+ * When non-null the service layer enforces that the referenced
+ * row is {@code kind=QUERY} — binding a {@code REST} row is
+ * rejected with 422 because no container runs there.
  */
 public record QueryRequest(
         Long id,
@@ -25,5 +34,6 @@ public record QueryRequest(
         boolean                     captcha,
         String                      detail,
         String                      action,
-        String                      style
+        String                      style,
+        Long                        microserviceId
 ) {}
