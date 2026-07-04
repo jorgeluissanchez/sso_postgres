@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Polls the local {@link DiscoveryClient} until a fresh
@@ -33,6 +34,17 @@ import java.util.List;
  * interval (1s) is below that — we sleep and re-poll
  * until either the instance shows up or the overall
  * deadline fires.
+ *
+ * <p><b>Case folding:</b> Eureka normalizes {@code appName}
+ * to UPPER CASE in its wire protocol (the {@code /apps}
+ * REST response always shows e.g. {@code QUERY-SERVICE-PRUEBA}
+ * — even if the registering client pushed a lowercase
+ * name). Spring Cloud's {@code DiscoveryClient.getInstances}
+ * does NOT paper over that normalization, so a literal
+ * {@code "query-service-prueba"} lookup returns an empty
+ * list. {@link #waitForInstance} tries both the caller's
+ * case and the {@code toUpperCase} variant on every poll,
+ * picking whichever hits first.
  */
 @Component
 public class EurekaReadinessProbe {
@@ -63,9 +75,18 @@ public class EurekaReadinessProbe {
      */
     public void waitForInstance(String serviceId) {
         Instant deadline = Instant.now().plus(TIMEOUT);
-        log.info("Waiting up to {} for {} to register with Eureka", TIMEOUT, serviceId);
+        // Probe both cases per poll: Eureka stores app names
+        // uppercase in the wire, but Spring Cloud
+        // DiscoveryClient doesn't normalize a lowercase
+        // lookup. Belt-and-braces until we know which arm
+        // of the cache actually serves the request.
+        String upper = serviceId.toUpperCase(Locale.ROOT);
+        log.info("Waiting up to {} for {} (or {}) to register with Eureka",
+                TIMEOUT, serviceId, upper);
         while (Instant.now().isBefore(deadline)) {
-            List<ServiceInstance> instances = discoveryClient.getInstances(serviceId);
+            List<ServiceInstance> instances = firstNonEmpty(
+                    discoveryClient.getInstances(upper),
+                    discoveryClient.getInstances(serviceId));
             if (instances != null && !instances.isEmpty()) {
                 log.info("Instance {} registered (host={}, port={})",
                         serviceId,
@@ -75,9 +96,26 @@ public class EurekaReadinessProbe {
             }
             sleep(POLL_INTERVAL);
         }
+        // No log at the throw site — the caller (and the
+        // GlobalExceptionHandler) will surface it. But we
+        // do want one diagnostic: confirm which exact
+        // service-ids the DiscoveryClient knows about, so a
+        // post-mortem doesn't have to guess whether the
+        // absence is a typo, a race, or a case bug.
+        log.warn("Eureka readiness timed out for {}. Known services: {}",
+                serviceId, discoveryClient.getServices());
         throw new ProvisioningException(
                 ProvisioningException.Code.EUREKA_TIMEOUT,
                 serviceId + " did not register within " + TIMEOUT);
+    }
+
+    @SafeVarargs
+    private static List<ServiceInstance> firstNonEmpty(
+            List<ServiceInstance>... candidates) {
+        for (List<ServiceInstance> c : candidates) {
+            if (c != null && !c.isEmpty()) return c;
+        }
+        return java.util.Collections.emptyList();
     }
 
     private static void sleep(Duration d) {
