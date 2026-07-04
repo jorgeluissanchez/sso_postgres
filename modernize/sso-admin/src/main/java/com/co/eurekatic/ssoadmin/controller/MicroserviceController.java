@@ -5,6 +5,8 @@ import com.co.eurekatic.common.repository.MicroserviceRepository;
 import com.co.eurekatic.ssoadmin.dto.ContainerStatusResponse;
 import com.co.eurekatic.ssoadmin.dto.MicroserviceRequest;
 import com.co.eurekatic.ssoadmin.dto.MicroserviceResponse;
+import com.co.eurekatic.ssoadmin.dto.MicroserviceTestConnectionRequest;
+import com.co.eurekatic.ssoadmin.dto.MicroserviceTestConnectionResponse;
 import com.co.eurekatic.ssoadmin.exception.NotFoundException;
 import com.co.eurekatic.ssoadmin.provisioner.ContainerProvisioner;
 import com.co.eurekatic.ssoadmin.service.MicroserviceService;
@@ -79,6 +81,19 @@ public class MicroserviceController {
     @PostMapping("/save")
     public ResponseEntity<MicroserviceResponse> create(@Valid @RequestBody MicroserviceRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.create(req));
+    }
+
+    /**
+     * Sonda de conexión para el wizard "crear microservicio QUERY".
+     * No persiste nada; abre una conexión con los parámetros dados
+     * y devuelve éxito/fallo. Requiere rol ADMIN — la regla
+     * {@code anyRequest().hasRole("ADMIN")} del {@code SecurityConfig}
+     * ya cubre la ruta, sin necesidad de matchers explícitos.
+     */
+    @PostMapping("/testConnection")
+    public MicroserviceTestConnectionResponse testConnection(
+            @Valid @RequestBody MicroserviceTestConnectionRequest req) {
+        return service.testConnection(req);
     }
 
     @PutMapping("/update")
