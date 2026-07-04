@@ -91,6 +91,14 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(ProvisioningException.class)
     public ResponseEntity<Map<String, Object>> handleProvisioning(ProvisioningException ex) {
+        // Always log: ProvisioningException is rare and never
+        // comes from a user mistake alone — it's the supply
+        // chain (container engine, sidecar, Eureka) failing.
+        // A silent 504/503 in the logs makes post-mortems
+        // guesswork, so we surface every occurrence at WARN
+        // (ERROR would be reserved for the catch-all below).
+        log.warn("ProvisioningException code={} message={}",
+                ex.getCode(), ex.getMessage());
         HttpStatus status = switch (ex.getCode()) {
             case SIDECAR_UNREACHABLE -> HttpStatus.SERVICE_UNAVAILABLE;
             case EUREKA_TIMEOUT      -> HttpStatus.GATEWAY_TIMEOUT;
