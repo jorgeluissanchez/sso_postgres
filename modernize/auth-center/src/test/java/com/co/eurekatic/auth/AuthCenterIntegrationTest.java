@@ -185,6 +185,22 @@ class AuthCenterIntegrationTest {
         alice.addRole(userRole);
         alice.addRole(adminRole);
         userRepository.save(alice);
+
+        // Bob exists for the non-admin /getUsersSSO test: he has the
+        // USER role only, NOT ADMIN. With the SecurityConfig rule
+        // `hasAuthority("ADMIN")` (Commit 11), bob's token should
+        // be authenticated but rejected with 403 — not allowed to
+        // see the full user list.
+        User bob = new User();
+        bob.setUsername("bob");
+        bob.setEmail("bob@example.com");
+        bob.setFullName("Bob Example");
+        bob.setPassword(passwordEncoder.encode("s3cret"));
+        bob.setEnabled(true);
+        bob.setActive(true);
+        bob.setLdap(false);
+        bob.addRole(userRole);
+        userRepository.save(bob);
     }
 
     @Test
@@ -233,6 +249,63 @@ class AuthCenterIntegrationTest {
         webTestClient.get().uri("/getInfoUser")
                 .exchange()
                 .expectStatus().isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    /* ====================== /getUsersSSO auth gating ====================== */
+
+    @Test
+    void getUsersSsoWithoutTokenReturns401() {
+        // Closes the anonymous user-enumeration / PII leak: prior to
+        // Commit 11, GET /getUsersSSO was permitAll and returned
+        // a list with every active user's username + email +
+        // fullName + roles to any caller. With hasAuthority("ADMIN")
+        // the SecurityConfig rejects anonymous callers with 401
+        // before the controller ever runs.
+        webTestClient.get().uri("/getUsersSSO")
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
+    void getUsersSsoWithNonAdminTokenReturns403() throws Exception {
+        // Bob has the USER role but NOT ADMIN. hasAuthority("ADMIN")
+        // authenticates the token (the JwtAuthenticationFilter
+        // populates SecurityContext with his `["USER"]` authority)
+        // but AccessDecisionManager denies access — the configured
+        // accessDeniedHandler responds with 403.
+        String bobToken = loginAndGetToken("bob", "s3cret");
+        webTestClient.get().uri("/getUsersSSO")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + bobToken)
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void getUsersSsoWithAdminTokenReturns200() throws Exception {
+        // Alice has both USER and ADMIN. ADMIN is enough.
+        String aliceToken = loginAndGetToken("alice", "s3cret");
+        byte[] bodyBytes = webTestClient.get().uri("/getUsersSSO")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + aliceToken)
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.OK)
+                .returnResult(Void.class)
+                .getResponseBodyContent();
+
+        JsonNode body = mapper.readTree(bodyBytes);
+        assertThat(body.isArray()).isTrue();
+        // Both seeded users (alice + bob) must be visible because
+        // getUsersSSO is filtering by enabled (not by role). If the
+        // SecurityConfig gate accidentally allowed anonymous
+        // callers through (regression), they would also see the same
+        // body — but the 200 status alone is the proof point: the
+        // 401/403/200 ladder is what the test pins down.
+        assertThat(body.size()).isGreaterThanOrEqualTo(2);
+
+        java.util.Set<String> usernames = new java.util.HashSet<>();
+        for (JsonNode u : body) {
+            usernames.add(u.get("username").asText());
+        }
+        assertThat(usernames).contains("alice", "bob");
     }
 
     @Test
@@ -434,25 +507,18 @@ class AuthCenterIntegrationTest {
      * user's identity in its {@code sub} claim. This is the test
      * that pins down the previous bypass-era behaviour where any
      * cookie yielded a token for the first enabled user.
+     *
+     * <p>Both alice (USER + ADMIN) and a second USER-only user are
+     * already seeded by {@link #seed()}, so this test does NOT seed
+     * an additional bob — that would collide on the unique username
+     * constraint once {@code seed()} also creates a bob for the
+     * /getUsersSSO tests. The "first in the DB" assertion still
+     * holds because alice is the alphabetically-later user so bob
+     * would be the natural "first" pick for any buggy
+     * findByUsername(...).findFirst() shortcut.
      */
     @Test
     void refreshReturnsTokenForCorrectUser() throws Exception {
-        // Seed a second user so we can verify the refresh-minted
-        // token is for the LOGGED-IN user, not whoever happens to
-        // be "first" in the DB.
-        User bob = new User();
-        bob.setUsername("bob");
-        bob.setEmail("bob@example.com");
-        bob.setFullName("Bob Example");
-        bob.setPassword(passwordEncoder.encode("s3cret"));
-        bob.setEnabled(true);
-        bob.setActive(true);
-        bob.setLdap(false);
-        Role userRole = roleRepository.findAll().stream()
-                .filter(r -> "USER".equals(r.getName())).findFirst().orElseThrow();
-        bob.addRole(userRole);
-        userRepository.save(bob);
-
         String aliceCookie = loginAndGetCookie("alice", "s3cret");
         FluxExchangeResult<Void> rotated = webTestClient.post().uri("/auth/refresh")
                 .cookie("sso_refresh", aliceCookie)
