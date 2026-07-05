@@ -5,6 +5,8 @@ import com.co.eurekatic.common.dto.AuthDtos.TokenResponse;
 import com.co.eurekatic.common.entity.User;
 import com.co.eurekatic.common.security.JwtProperties;
 import com.co.eurekatic.common.security.JwtTokenService;
+import com.co.eurekatic.common.security.RefreshTokenStore;
+import com.co.eurekatic.common.security.RefreshUnavailableException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -39,17 +41,24 @@ import java.util.stream.Collectors;
  * (jjwt 0.7, returns LoginResponse with routes list) — the modernized
  * version uses jjwt 0.12 and {@link TokenResponse}, deferring route
  * lookup to {@code /getRoutes} so the token stays slim.
+ *
+ * <p>The refresh token is now minted via {@link RefreshTokenStore}
+ * (Redis-backed, see {@code RedisRefreshTokenStore}). Storing it
+ * server-side lets us rotate on every refresh and detect reuse
+ * (RFC 9700 §4.14).
  */
 public class JsonLoginFilter extends AbstractAuthenticationProcessingFilter {
 
     private final JwtTokenService jwt;
     private final ObjectMapper mapper;
     private final JwtProperties props;
+    private final RefreshTokenStore refreshTokenStore;
 
     public JsonLoginFilter(AuthenticationManager authenticationManager,
                            JwtTokenService jwt,
                            ObjectMapper mapper,
-                           JwtProperties props) {
+                           JwtProperties props,
+                           RefreshTokenStore refreshTokenStore) {
         // Spring Security 7 migration: AntPathRequestMatcher (from
         // spring-security-web 6.x) was removed. The replacement is
         // PathPatternRequestMatcher, built from Spring's PathPatternParser
@@ -62,6 +71,7 @@ public class JsonLoginFilter extends AbstractAuthenticationProcessingFilter {
         this.jwt = jwt;
         this.mapper = mapper;
         this.props = props;
+        this.refreshTokenStore = refreshTokenStore;
         // We are stateless; do not create or persist HttpSession-bound
         // security contexts across requests.
         setSecurityContextRepository(new org.springframework.security.web.context.NullSecurityContextRepository());
@@ -91,26 +101,50 @@ public class JsonLoginFilter extends AbstractAuthenticationProcessingFilter {
 
         Object principal = authResult.getPrincipal();
         String username = (principal instanceof User u) ? u.getUsername() : authResult.getName();
+        String userId = (principal instanceof User u && u.getId() != null)
+                ? String.valueOf(u.getId())
+                : username;
         Set<String> roles = authResult.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
         String accessToken = jwt.issueAccessToken(username, roles);
-        String refreshToken = UUID.randomUUID().toString().replace("-", "");
 
-        // The refresh token is now ALSO delivered as an HttpOnly cookie so
+        // Mint a new refresh token via the store. Each login starts a
+        // fresh family so multi-device sessions are independent. If the
+        // store is unreachable we fail the login (503) — never fall
+        // back to an unstored token (that's the bypass we're fixing).
+        String refreshToken;
+        long ttlSeconds;
+        try {
+            String familyId = UUID.randomUUID().toString().replace("-", "");
+            RefreshTokenStore.RefreshTokenHandle handle =
+                    refreshTokenStore.mint(username, userId, familyId);
+            refreshToken = handle.rawToken();
+            ttlSeconds = handle.ttlSeconds();
+        } catch (RefreshUnavailableException e) {
+            response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            response.setCharacterEncoding("UTF-8");
+            mapper.writeValue(response.getOutputStream(), Map.of(
+                    "timestamp", Instant.now().toString(),
+                    "status", 503,
+                    "error", "store_unavailable",
+                    "message", "Authentication service temporarily unavailable"
+            ));
+            return;
+        }
+
+        // The refresh token is also delivered as an HttpOnly cookie so
         // the admin SPA (and any future browser-based client) can call
         // POST /auth/refresh without holding the refresh token in JS-
         // accessible storage. SameSite=Strict blocks cross-site requests;
         // HttpOnly blocks XSS exfiltration; Secure requires HTTPS in
-        // production. Path=/auth keeps the cookie scoped to the auth-center
-        // routes — we don't need to send it to /sso-admin or /hello-service.
-        //
-        // 30-day Max-Age matches the legacy refresh-token lifetime. The
-        // server-side expiry of the underlying refresh is enforced in
-        // RefreshController (the cookie's Max-Age is a browser-side hint,
-        // not the source of truth — see comment there).
-        response.addHeader(HttpHeaders.SET_COOKIE, buildRefreshCookie(refreshToken, request));
+        // production. Path=/ keeps the cookie scoped to both the
+        // legacy /auth/refresh path AND the gateway-mounted
+        // /api/auth/refresh path.
+        response.addHeader(HttpHeaders.SET_COOKIE,
+                buildRefreshCookie(refreshToken, ttlSeconds, request));
 
         response.setStatus(HttpServletResponse.SC_OK);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
@@ -120,18 +154,37 @@ public class JsonLoginFilter extends AbstractAuthenticationProcessingFilter {
     }
 
     /**
-     * Builds the {@code Set-Cookie} header value for the refresh token.
-     * Kept package-private and static so the cookie shape is testable in
-     * isolation. {@code Secure} is omitted when the request comes in over
-     * plain HTTP (dev), added when the connection is TLS (prod). SameSite
-     * is always Strict because the SPA never needs cross-site auth.
+     * Backward-compatible overload that pins the Max-Age to the
+     * default 30 days. Prefer {@link #buildRefreshCookie(String, long,
+     * HttpServletRequest)} so the cookie's Max-Age tracks the
+     * configured refresh-token TTL from {@code sso.refresh-token.ttl-seconds}.
+     * Kept for callers that haven't yet been rewired to read the
+     * configured TTL (e.g. {@code RefreshController} before the
+     * store-aware rewrite lands).
      */
     public static String buildRefreshCookie(String refreshToken, HttpServletRequest request) {
+        return buildRefreshCookie(refreshToken, REFRESH_COOKIE_MAX_AGE, request);
+    }
+
+    /**
+     * Builds the {@code Set-Cookie} header value for the refresh token.
+     * Kept static so the cookie shape is testable in isolation.
+     * {@code Secure} is omitted when the request comes in over plain
+     * HTTP (dev), added when the connection is TLS (prod). SameSite is
+     * always Strict because the SPA never needs cross-site auth.
+     *
+     * <p>{@code maxAgeSeconds} is sourced from the
+     * {@link RefreshTokenStore} (which itself reads
+     * {@code sso.refresh-token.ttl-seconds}) so the browser-side hint
+     * matches the server-side source of truth.
+     */
+    public static String buildRefreshCookie(String refreshToken, long maxAgeSeconds,
+                                            HttpServletRequest request) {
         boolean secure = request.isSecure();
         StringBuilder sb = new StringBuilder(128);
         sb.append(REFRESH_COOKIE_NAME).append('=').append(refreshToken)
           .append("; Path=").append(REFRESH_COOKIE_PATH)
-          .append("; Max-Age=").append(REFRESH_COOKIE_MAX_AGE)
+          .append("; Max-Age=").append(maxAgeSeconds)
           .append("; HttpOnly")
           .append("; SameSite=Strict");
         if (secure) {
@@ -151,7 +204,7 @@ public class JsonLoginFilter extends AbstractAuthenticationProcessingFilter {
     // intact; the path scoping was defense-in-depth that broke when
     // the gateway added an /api prefix.
     public static final String REFRESH_COOKIE_PATH = "/";
-    /** 30 days. Matches the legacy refresh-token lifetime. */
+    /** Default 30 days. Mirrored from {@code sso.refresh-token.ttl-seconds} via the store. */
     public static final int REFRESH_COOKIE_MAX_AGE = 30 * 24 * 60 * 60;
 
     @Override
