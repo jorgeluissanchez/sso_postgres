@@ -5,6 +5,7 @@ import com.co.eurekatic.auth.security.JsonLoginFilter;
 import com.co.eurekatic.auth.security.JwtAuthenticationFilter;
 import com.co.eurekatic.common.security.CorsProperties;
 import com.co.eurekatic.common.security.JwtTokenService;
+import com.co.eurekatic.common.security.RefreshTokenStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -51,10 +52,11 @@ public class SecurityConfig {
             ObjectMapper objectMapper,
             com.co.eurekatic.common.security.JwtProperties jwtProperties,
             CorsProperties corsProperties,
-            JsonAuthHandlers handlers) throws Exception {
+            JsonAuthHandlers handlers,
+            RefreshTokenStore refreshTokenStore) throws Exception {
 
         JsonLoginFilter loginFilter = new JsonLoginFilter(
-                authenticationManager, jwt, objectMapper, jwtProperties);
+                authenticationManager, jwt, objectMapper, jwtProperties, refreshTokenStore);
         JwtAuthenticationFilter jwtFilter = new JwtAuthenticationFilter(jwt, jwtProperties);
 
         return http
