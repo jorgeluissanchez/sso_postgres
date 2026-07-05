@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChipInput } from "@/components/ui/ChipInput";
 import { Drawer } from "@/components/ui/Drawer";
 import { Input } from "@/components/ui/Input";
 import { Form, zodFieldErrors } from "@/components/forms/Form";
 import { Tabs, type TabItem } from "@/components/ui/Tabs";
-import { BindingTab } from "@/components/ui/BindingTab";
+import { BindingTab, type BulkAction } from "@/components/ui/BindingTab";
 import { writeFormSchema, type WriteFormValues } from "@/schemas";
 import { useMicroservices } from "@/hooks/useMicroservices";
 import {
@@ -492,6 +492,17 @@ function ColumnPicker({
   const columns = useMicroserviceTableColumns(source);
   const data: ColumnInfo[] = columns.data ?? [];
 
+  // Tier 1 scaling — same pattern as BindingTab. Search by
+  // column name (case-insensitive substring). The search input
+  // is only rendered when the catalog returned at least 5
+  // rows; smaller tables render the original list unchanged
+  // to keep the panel tidy for the common case.
+  const [query, setQuery] = useState("");
+  const trimmed = query.trim().toLowerCase();
+  const visible = trimmed.length === 0
+    ? data
+    : data.filter((c) => c.name.toLowerCase().includes(trimmed));
+
   const checkedSet = useMemo(() => new Set(value), [value]);
   const pkNames = useMemo(
     () => data.filter((c) => c.primaryKey).map((c) => c.name),
@@ -521,6 +532,9 @@ function ColumnPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoPickPk, pkNames, onChange]);
 
+  const showSearch = data.length >= 5;
+  const visibleNames = useMemo(() => visible.map((c) => c.name), [visible]);
+
   return (
     <div
       className="mt-3 rounded border border-slate-200 bg-slate-50 p-3"
@@ -545,9 +559,74 @@ function ColumnPicker({
           No se pudo cargar el catálogo de columnas.
         </p>
       ) : null}
+      {showSearch && data.length > 0 ? (
+        <div className="mt-2 space-y-1.5">
+          <div className="relative">
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Buscar columna…"
+              aria-label="Buscar columna"
+              data-testid={testId ? `${testId}-search` : undefined}
+              className={[
+                "w-full rounded border border-slate-300 bg-white px-2 py-1 pr-7 text-xs",
+                "outline-none placeholder:text-slate-400",
+                "focus:border-sky-500 focus:ring-1 focus:ring-sky-500",
+              ].join(" ")}
+            />
+            {query.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                aria-label="Limpiar búsqueda"
+                data-testid={testId ? `${testId}-search-clear` : undefined}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-xs text-slate-400 hover:text-slate-600"
+              >
+                ×
+              </button>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[10px] text-slate-500" data-testid={testId ? `${testId}-visible-count` : undefined}>
+              {visible.length} visibles · {checkedSet.size} seleccionadas
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  // Toggle visible: add each visible name not yet
+                  // checked; remove those that are checked. The
+                  // resulting array order matches `visible` so the
+                  // chip list reads in catalog order.
+                  const visibleSet = new Set(visibleNames);
+                  const next = value.filter((v) => !visibleSet.has(v));
+                  for (const n of visibleNames) next.push(n);
+                  onChange(next);
+                }}
+                data-testid={testId ? `${testId}-select-all` : undefined}
+                className="rounded bg-sky-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-sky-700"
+              >
+                Seleccionar visibles
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const visibleSet = new Set(visibleNames);
+                  onChange(value.filter((v) => !visibleSet.has(v)));
+                }}
+                data-testid={testId ? `${testId}-clear-visible` : undefined}
+                className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-100"
+              >
+                Limpiar visibles
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {data.length > 0 ? (
-        <ul className="mt-2 space-y-1">
-          {data.map((c) => {
+        <ul className="mt-2 space-y-1" data-testid={testId ? `${testId}-list` : undefined}>
+          {visible.map((c) => {
             const checked = checkedSet.has(c.name);
             return (
               <li
@@ -619,6 +698,20 @@ function RolesTab({ writeId }: { writeId: number }) {
   const bind = useBindWriteRole();
   const unbind = useUnbindWriteRole();
   const pending = bind.isPending || unbind.isPending;
+  // Same search + bulk-action toolbar as AppFormDrawer; the
+  // shape of WriteRoleChecked is identical to AppRoleChecked so
+  // the BulkAction just needs the right arg key (roleId).
+  const bulk: BulkAction = {
+    bindLabel: "Vincular visibles",
+    unbindLabel: "Desvincular visibles",
+    testIdPrefix: "write-role-bulk",
+    onApply: (rowIds, action) => {
+      const mutator = action === "bind" ? bind : unbind;
+      void Promise.all(
+        rowIds.map((rid) => mutator.mutateAsync({ id: writeId, roleId: rid })),
+      );
+    },
+  };
   return (
     <BindingTab
       entityId={writeId}
@@ -628,6 +721,8 @@ function RolesTab({ writeId }: { writeId: number }) {
       isPending={pending}
       emptyText="No hay roles creados."
       toggleIdPrefix="role-toggle"
+      searchPlaceholder="Buscar rol…"
+      getRowLabel={(r) => r.name}
       getRowId={(r) => r.roleId}
       getRowChecked={(r) => r.checked}
       onToggle={(roleId, checked) => {
@@ -637,6 +732,7 @@ function RolesTab({ writeId }: { writeId: number }) {
           void bind.mutateAsync({ id: writeId, roleId });
         }
       }}
+      bulkAction={bulk}
       renderRow={(r) => r.name}
     />
   );
