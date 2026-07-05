@@ -48,6 +48,16 @@ spring:
             - id: auth-center-info
               uri: lb://auth-center
               predicates:
+                # /getUsersSSO discloses usernames + emails + full names
+                # of every active user. Auth gating lives at the
+                # WebFlux SecurityConfig layer (commits 11 + 12):
+                # `.pathMatchers("/getUsersSSO").hasAuthority("ADMIN")`
+                # rejects anonymous callers BEFORE route forwarding
+                # happens. The route entry stays so ADMIN callers can
+                # actually reach auth-center; the security check is
+                # upstream of the route forwarder. Removing the entry
+                # here would 404 legitimate ADMIN traffic, so this
+                # route is auth-gated, NOT route-removed.
                 - Path=/login,/getToken,/getApiToken,/getInfoUser,/getUsersSSO,/googleLogin
               filters:
                 - AddResponseHeader=X-Source, api-gateway
