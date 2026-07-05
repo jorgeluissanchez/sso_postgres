@@ -32,6 +32,10 @@
 #   7. Cookie security attributes: HttpOnly, SameSite=Strict,
 #      no Domain, Path=/ (Secure must NOT appear over plain HTTP).
 #   8. /auth/refresh with NO cookie returns 401 no_refresh_cookie.
+#   9. /getUsersSSO anonymous returns 401 (closes the
+#      user-enumeration / PII leak fixed in this branch via
+#      SecurityConfig hasAuthority("ADMIN") at both the
+#      auth-center and api-gateway layers — commits 11 + 12).
 #
 # Run from project root (assumes the stack is up):
 #   bash admin-ui/scripts/smoke-auth-refresh.sh
@@ -180,7 +184,7 @@ curl -sS -o /dev/null -D /tmp/login2-hdr.$$ -X POST "$GATEWAY/login" \
   -H "Content-Type: application/json" \
   -c "$JAR2" \
   -d "{\"username\":\"$ADMIN_USER\",\"password\":\"$ADMIN_PASSWORD\"}"
-trap 'rm -f "$JAR" "$JAR2" "$V1_JAR" "$V2_JAR" "$PRE_JAR" "$EMPTY_JAR" "$A_JAR" "$B_JAR" "$DEV_A" "$DEV_B" /tmp/smoke-refresh-body.$$ /tmp/smoke-refresh-hdr.$$ /tmp/login-body.$$ /tmp/login-hdr.$$ /tmp/login2-hdr.$$ /tmp/reuse-body.$$ /tmp/v2-body.$$ /tmp/empty-body.$$ /tmp/logout-hdr.$$' EXIT
+trap 'rm -f "$JAR" "$JAR2" "$V1_JAR" "$V2_JAR" "$PRE_JAR" "$EMPTY_JAR" "$A_JAR" "$B_JAR" "$DEV_A" "$DEV_B" /tmp/smoke-refresh-body.$$ /tmp/smoke-refresh-hdr.$$ /tmp/login-body.$$ /tmp/login-hdr.$$ /tmp/login2-hdr.$$ /tmp/reuse-body.$$ /tmp/v2-body.$$ /tmp/empty-body.$$ /tmp/anon-users-body.$$ /tmp/logout-hdr.$$' EXIT
 
 LOGOUT_HTTP=$(curl -sS -o /dev/null -D /tmp/logout-hdr.$$ -w '%{http_code}' \
   -X POST "$GATEWAY/api/auth/logout" -b "$JAR2")
@@ -298,6 +302,35 @@ if echo "$EMPTY_BODY" | grep -q "no_refresh_cookie"; then
   ok "Body contains no_refresh_cookie"
 else
   bad "Body missing no_refresh_cookie: $EMPTY_BODY"
+fi
+
+# ---------- 9. anonymous /getUsersSSO returns 401 ----------
+hr
+echo ">>> 9. GET /getUsersSSO with no Authorization returns 401 (admin enumeration closed)"
+
+# Anonymous request — no Bearer, no cookie, nothing. Was 200 with
+# a list of usernames + emails + full names + roles before
+# Commits 11 + 12. After, it must be 401 from the gateway
+# SecurityConfig layer (which runs BEFORE route forwarding in the
+# Spring Cloud Gateway filter chain). auth-center re-checks the
+# ADMIN requirement on its own servlet stack.
+ANON_USERS_HTTP=$(curl -sS -o /tmp/anon-users-body.$$ -w '%{http_code}' \
+  "$GATEWAY/getUsersSSO")
+if [ "$ANON_USERS_HTTP" = "401" ]; then
+  ok "Anonymous /getUsersSSO returns 401"
+else
+  bad "Anonymous /getUsersSSO expected 401, got $ANON_USERS_HTTP"
+  cat /tmp/anon-users-body.$$ || true
+fi
+
+# Also verify the body is NOT the user list (regression guard:
+# if someone accidentally re-permitAll'd the path, we'd still
+# get a 401-ish JSON but maybe a leaked schema).
+ANON_USERS_BODY=$(cat /tmp/anon-users-body.$$)
+if echo "$ANON_USERS_BODY" | grep -q '"username"'; then
+  bad "Anonymous /getUsersSSO body looks like the user enumeration leak: $ANON_USERS_BODY"
+else
+  ok "Anonymous body does not contain user enumeration payload"
 fi
 
 # ---------- summary ----------
