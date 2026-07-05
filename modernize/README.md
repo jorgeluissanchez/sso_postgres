@@ -250,9 +250,9 @@ activation/restore links do not.
 |---|---|---|---|
 | `POST` | `/sso-admin/createAccount`        | `ADMIN` | Creates a user in `active=true, enabled=false` state, issues an activation token, sends the activation email |
 | `PUT`  | `/sso-admin/updateAccount`        | `ADMIN` | Updates mutable user fields; `null` leaves unchanged; non-null `roleNames` REPLACES the role set |
-| `GET`  | `/sso-admin/activateAccount?token=…&password=…` | **public** | Activates a user via the email link; sets `enabled=true` and BCrypts the password |
+| `POST` | `/sso-admin/activateAccount`     | **public** | Activates a user via the email link; body is `{token, password}`; sets `enabled=true` and BCrypts the password. Replaces the legacy GET-with-password-query shape (commits 2 + 5). |
 | `GET`  | `/sso-admin/forgotPassword?email=…` | **public** | Issues a restore token and emails the user. Always 200 (no email enumeration) |
-| `GET`  | `/sso-admin/restorePassword?token=…&password=…` | **public** | Restores the password via the restore token |
+| `POST` | `/sso-admin/restorePassword`     | **public** | Restores the password via the restore token; body is `{token, password}`. Replaces the legacy GET-with-password-query shape (commits 3 + 6). |
 | `GET`  | `/sso-admin/getUsers`             | `ADMIN` | Lists all users (id, fullName, username, ldap, active, roleNames) |
 | `GET`  | `/sso-admin/getRolesByUsername?username=…` | `ADMIN` | Returns the role names of the given user |
 | `GET`  | `/sso-admin/user/roles?userId=…`  | `ADMIN` | Same shape as `getRolesByUsername`, looked up by id |
@@ -404,8 +404,8 @@ curl -sI http://localhost:8080/admin/assets/index-XXXXXXXX.js # 200 js
 | `SMTP_HOST` | `mailhog` | sso-admin | SMTP relay host. In dev, the `mailhog` service. In prod, your mail relay. |
 | `SMTP_PORT` | `1025` | sso-admin | SMTP port. MailHog default is 1025. |
 | `SMTP_FROM` | `no-reply@example.com` | sso-admin | `From:` header for activation and restore emails |
-| `SSO_ACTIVATION_URL` | `http://localhost:8080/sso-admin/activateAccount` | sso-admin | Public URL the user clicks to activate their account |
-| `SSO_RESTORE_URL` | `http://localhost:8080/sso-admin/restorePassword` | sso-admin | Public URL the user clicks to restore their password |
+| `SSO_ACTIVATION_URL` | `http://localhost:8080/admin/activate` | sso-admin | Public URL the user clicks in the activation email — points at the SPA landing page that hosts the password form (POSTs to `/sso-admin/activateAccount`) |
+| `SSO_RESTORE_URL` | `http://localhost:8080/admin/restore-password` | sso-admin | Public URL the user clicks in the restore-password email — points at the SPA landing page that hosts the password form (POSTs to `/sso-admin/restorePassword`) |
 | `SSO_EMAIL_COMPANY` | `Example Inc.` | sso-admin | Company name shown in the email header |
 | `SSO_EMAIL_APP_NAME` | `SSO Modernizado` | sso-admin | Application name shown in the email |
 | `SSO_EMAIL_LOGO_URL` | `https://www.example.com/img/logo.png` | sso-admin | Logo URL embedded in the email |
