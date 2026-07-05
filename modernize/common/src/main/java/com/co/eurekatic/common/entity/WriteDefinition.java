@@ -11,6 +11,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.JoinTable;
 import jakarta.persistence.ManyToMany;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -44,6 +45,12 @@ import java.util.Set;
  *
  * <p>Relations:
  * <ul>
+ *   <li>{@link #microservice} — many-to-one. The intended
+ *       {@code query-service-<instanceName>} target (must be
+ *       {@code kind=QUERY} if non-null). Nullable; null means
+ *       "global" (any instance with the right datasource may
+ *       serve it). Mirrors the binding on {@link Query} so the
+ *       admin-ui can offer a per-instance table picker.</li>
  *   <li>{@link #roles} — many-to-many. Owning side of
  *       {@code ROLE_WRITE}. Call {@link #addRole(Role)} to grant
  *       a role write access. The catalog endpoint enforces this
@@ -107,6 +114,20 @@ public class WriteDefinition {
      */
     @Column(name = "CREATEDDATE", insertable = false, updatable = false)
     private LocalDateTime createdDate;
+
+    /**
+     * Which {@link Microservice} instance (kind=QUERY) is the
+     * intended target for this write. Nullable — a {@code NULL}
+     * value means the write is "global" and any
+     * {@code query-service-<instanceName>} with the right
+     * datasource may serve it. The admin-ui Writes Catalog
+     * uses this to filter the table-picker dropdown per
+     * backing instance (mirrors the pattern established on
+     * {@link Query#getMicroservice()}).
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "MICROSERVICE_ID")
+    private Microservice microservice;
 
     @ManyToMany(fetch = FetchType.LAZY)
     @JoinTable(

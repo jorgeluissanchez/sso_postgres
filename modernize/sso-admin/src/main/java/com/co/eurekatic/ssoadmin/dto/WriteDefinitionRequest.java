@@ -22,6 +22,16 @@ import jakarta.validation.constraints.Size;
  * The catalog endpoint returns it verbatim; {@code query-service}
  * re-validates it against an identifier regex before
  * interpolating — defense in depth.
+ *
+ * <p>{@code microserviceId} binds the write to a backing
+ * {@code query-service-<instance>} container. Nullable: a
+ * {@code null} value keeps the write "global" so any instance
+ * with the right datasource may serve it (legacy behavior,
+ * still useful for the canonical single-instance deployment).
+ * When non-null the service layer enforces that the referenced
+ * row is {@code kind=QUERY} — binding a {@code REST} row is
+ * rejected with 400 INVALID_REQUEST because no container runs
+ * there to accept the write.
  */
 public record WriteDefinitionRequest(
         Long id,
@@ -29,5 +39,6 @@ public record WriteDefinitionRequest(
         @NotNull                    WriteType writeType,
         @NotBlank @Size(max = 200)  String tableName,
         @NotBlank                   String columns,
-        String                      keyColumns
+        String                      keyColumns,
+        Long                        microserviceId
 ) {}

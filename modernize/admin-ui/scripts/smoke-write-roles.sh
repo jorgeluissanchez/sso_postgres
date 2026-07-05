@@ -76,13 +76,36 @@ hr
 echo ">>> 2. POSTing a self-seeded write definition"
 
 UUID="smoke-write-$SUFFIX"
+
+# Look up any kind=QUERY instance so we can exercise the new
+# microserviceId binding. The smoke just needs a row that the
+# service will accept; resolveWriteMicroservice rejects REST
+# rows with 400 INVALID_REQUEST, so a non-QUERY won't work.
+# In dev databases the legacy name was `postgres`; in others
+# the instance name is unique-per-flow (e.g. `prueba2`). We
+# pick the lowest-id QUERY row to stay deterministic.
+MS_ID=$(psql_q "SELECT ID_MICROSERVICE FROM MICROSERVICE
+                WHERE KIND = 'QUERY'
+                ORDER BY ID_MICROSERVICE ASC
+                LIMIT 1;" | head -1)
+if [ -z "$MS_ID" ]; then
+  bad "no MICROSERVICE row with KIND=QUERY — provision one before running this smoke"
+  hr; echo "0 / 0 checks passed (skipped)"; exit 1
+fi
+info "kind=QUERY microservice id = $MS_ID"
+
+# Include microserviceId so the FK binding actually exercises
+# WriteDefinitionAdminService.copy → resolveWriteMicroservice.
+# null would be a no-op and we'd never catch a regression where
+# the column is silently dropped on the wire.
 CREATE_BODY=$(cat <<EOF
 {
   "uuid": "$UUID",
   "writeType": "INSERT",
   "tableName": "public.smoke_dummy_$SUFFIX",
   "columns": "[\"ID\"]",
-  "keyColumns": null
+  "keyColumns": null,
+  "microserviceId": $MS_ID
 }
 EOF
 )
@@ -92,6 +115,19 @@ assert_http 201 "$CREATE_HTTP" "create write definition"
 
 WRITE_ID=$(python3 -c "import json; print(json.load(open('/tmp/smoke-write-create.json'))['id'])")
 info "new write id = $WRITE_ID"
+
+# The response must echo the binding so the admin UI can render
+# it on the writes table without a second round-trip.
+ECHOED_MS=$(python3 -c "
+import json
+d = json.load(open('/tmp/smoke-write-create.json'))
+print(d.get('microserviceId') if d.get('microserviceId') is not None else 'null')
+")
+if [ "$ECHOED_MS" = "$MS_ID" ]; then
+  ok "create response carries microserviceId=$MS_ID (WriteDefinitionResponse.fromEntity)"
+else
+  bad "create response microserviceId mismatch — got '$ECHOED_MS', expected '$MS_ID'"
+fi
 
 # Ensure known-clean starting state for the role we'll bind.
 ROLE_ID=$(psql_q "SELECT id_role FROM role ORDER BY id_role LIMIT 1;" | head -1)
@@ -193,6 +229,17 @@ PG_GONE=$(psql_q "SELECT 1 FROM role_write WHERE write_definition_id=$WRITE_ID A
 [ -z "$PG_GONE" ] \
   && ok "role_write row removed" \
   || bad "role_write row still present after unbind"
+
+# Assert the FK column actually persisted on the way out before
+# we tear the row down. The 07- migration adds MICROSERVICE_ID;
+# this guards against a regression where the field is dropped
+# server-side (e.g. someone removes `w.setMicroservice(...)`
+# from copy()). Must run BEFORE the DELETE below or the row
+# is already gone.
+PG_FK=$(psql_q "SELECT microservice_id FROM write_definition WHERE id_write_definition=$WRITE_ID;")
+[ "$PG_FK" = "$MS_ID" ] \
+  && ok "write_definition.MICROSERVICE_ID persisted as $MS_ID" \
+  || bad "write_definition.MICROSERVICE_ID missing or wrong — got '$PG_FK'"
 
 # Cleanup also runs via trap, but do it explicitly to verify.
 DEL_HTTP=$(curl -sS -o /dev/null -w "%{http_code}" \
