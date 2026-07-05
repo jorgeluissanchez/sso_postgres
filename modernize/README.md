@@ -12,7 +12,7 @@ topology work end-to-end before the larger migration begins.
 |---|---|---|
 | `eurekaserver` | Spring Boot 3.5 + Spring Cloud Netflix Eureka | Service registry. Service-discovery for all 4 modules. |
 | `common` | Plain Java library | `User` and `Role` JPA entities, `UserRepository` / `RoleRepository`, `JwtTokenService` (jjwt 0.12.7), shared DTOs. |
-| `auth-center` | Spring Boot 3.5 servlet (Tomcat) | Login (`POST /login`), `GET /getToken`, `GET /getApiToken`, `GET /getInfoUser`, `GET /getUsersSSO`, `POST /auth/refresh`, `POST /auth/logout`. Issues + validates JWTs. Sets the `sso_refresh` httpOnly cookie on login. |
+| `auth-center` | Spring Boot 3.5 servlet (Tomcat) | Login (`POST /login`), `GET /getApiToken`, `GET /getInfoUser`, `GET /getUsersSSO` (ADMIN-only), `POST /auth/refresh`, `POST /auth/logout`. Issues + validates JWTs. Sets the `sso_refresh` httpOnly cookie on login. |
 | `api-gateway` | Spring Cloud Gateway 4 (WebFlux/Netty) | Validates JWTs, injects `X-Authenticated-*` headers, routes `/auth/**` and `/login` to auth-center, and auto-discovers downstream services from Eureka. Also serves the admin-ui SPA at `/admin/**`. |
 | `hello-service` | Spring Boot 3.5 reactive (WebFlux) | Reference downstream service. Exposes `/api/hello` and `/api/whoami`. Reachable via the gateway at `/hello-service/**`. |
 | `admin-ui` | Vite 5 + React 19 + TS strict + Tailwind | Admin SPA. Built into the api-gateway image (NOT a Maven module). Consumes the 26 sso-admin endpoints. |
@@ -230,7 +230,6 @@ otherwise noted. Trailing `/auth` is stripped before forwarding to
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `POST` | `/login` | none | JSON body `{"username","password"}` → `{token, refreshToken, ...}` (200) or 401 |
-| `GET`  | `/getToken`        | required | Re-issues a new access token for the authenticated user |
 | `GET`  | `/getApiToken`     | required | Issues a long-lived API token (typ=api) for the authenticated user |
 | `GET`  | `/getInfoUser`     | required | Returns the authenticated user's profile (id, username, email, roles) |
 | `GET`  | `/getUsersSSO`     | required, `ADMIN` | Lists all users in the SSO |
@@ -477,7 +476,7 @@ modernize/
 | 1 | ✅ | Parent POM + Eureka server |
 | 2 | ✅ | `common` module skeleton (entities, JPA repos) |
 | 3 | ✅ | `common` JWT service (jjwt 0.12.7, unit-tested) |
-| 4 | ✅ | `auth-center` with login + getToken + JPA-backed `UserDetailsService` |
+| 4 | ✅ | `auth-center` with login + getApiToken + JPA-backed `UserDetailsService` |
 | 5 | ✅ | `api-gateway` reactive security with JWT validation and routes |
 | 6 | ✅ | Dynamic routes + global filters (X-Authenticated-* injection) |
 | 7 | ✅ | Default admin seeder (`DataInitializer`) + hello-world downstream service |
