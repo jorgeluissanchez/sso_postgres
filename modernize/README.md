@@ -459,6 +459,16 @@ modernize/
 4. **Lock down the network path** between api-gateway and downstream services. The `X-Authenticated-*` headers are advisory and can be spoofed by anyone who can reach the downstream directly.
 5. **Refresh the bootstrap password** on first deploy. `DataInitializer` skips seeding if the user already exists, so rotating the password requires either an admin endpoint or a DB migration.
 6. **BCrypt cost** is 12 (`AuthenticationConfig.passwordEncoder`). Adjust up if your hardware can afford it.
+7. **`GET /getUsersSSO` is ADMIN-only.** Until commits 11+12 on
+   `feat/sso-admin-query-catalog` it was permit-all at both the
+   api-gateway and auth-center layers, returning every active
+   user's username + email + fullName + roles to any anonymous
+   caller (PII leak). It is now gated by `hasAuthority("ADMIN")`
+   on both layers — the anonymous request returns 401 before
+   any controller runs. The integration test
+   `AuthCenterIntegrationTest#getUsersSsoWithoutTokenReturns401`
+   pins the contract. Anyone reintroducing `permitAll()` on this
+   path should fail CI.
 
 ## Migration roadmap (how this maps to the legacy code)
 
