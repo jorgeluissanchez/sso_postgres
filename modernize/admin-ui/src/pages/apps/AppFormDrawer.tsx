@@ -3,9 +3,15 @@ import { Drawer } from "@/components/ui/Drawer";
 import { Input } from "@/components/ui/Input";
 import { Form, zodFieldErrors } from "@/components/forms/Form";
 import { Tabs, type TabItem } from "@/components/ui/Tabs";
-import { BindingTab } from "@/components/ui/BindingTab";
+import { BindingTab, type BulkAction } from "@/components/ui/BindingTab";
 import { appFormSchema, type AppFormValues } from "@/schemas";
-import type { AppResponse } from "@/api/types";
+import type {
+  AppMicroserviceChecked,
+  AppResponse,
+  AppRoleChecked,
+  AppRouteChecked,
+  AppUserChecked,
+} from "@/api/types";
 import {
   useAppMicroservicesChecked,
   useAppRolesChecked,
@@ -174,13 +180,48 @@ function DisabledTabHint() {
  * pair, pass {@code entityId={app.id}} and
  * {@code listTestIdPrefix="app-bindings"}, and the cell renderer.
  */
+/* ====================== Binding tabs ====================== */
+
+/**
+ * Builds the shared {@link BulkAction} descriptor for a binding
+ * tab. Two helper closures wrap bind/unbind so the toolbar can
+ * fan out across the currently-filtered slice in one click. The
+ * fan-out is best-effort: each row is its own POST/DELETE, and
+ * a single failure doesn't abort the rest (React Query mutations
+ * are independent and each invalidates the {@code …/checked}
+ * query key on settle).
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function appBulkAction(
+  entityId: number,
+  bind: { mutateAsync: (vars: any) => Promise<unknown> },
+  unbind: { mutateAsync: (vars: any) => Promise<unknown> },
+  rowArgKey: "roleId" | "userId" | "routeId" | "microserviceId",
+  testIdPrefix: string,
+): BulkAction {
+  return {
+    bindLabel: "Vincular visibles",
+    unbindLabel: "Desvincular visibles",
+    testIdPrefix,
+    onApply: (rowIds, action) => {
+      const mutator = action === "bind" ? bind : unbind;
+      void Promise.all(
+        rowIds.map((rid) =>
+          mutator.mutateAsync({ id: entityId, [rowArgKey]: rid }),
+        ),
+      );
+    },
+  };
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 function RolesTab({ appId }: { appId: number }) {
   const roles = useAppRolesChecked(appId);
   const bind = useBindAppRole();
   const unbind = useUnbindAppRole();
   const pending = bind.isPending || unbind.isPending;
   return (
-    <BindingTab
+    <BindingTab<AppRoleChecked>
       entityId={appId}
       listTestIdPrefix="app-bindings"
       data={roles.data}
@@ -188,6 +229,8 @@ function RolesTab({ appId }: { appId: number }) {
       isPending={pending}
       emptyText="No hay roles creados."
       toggleIdPrefix="role-toggle"
+      searchPlaceholder="Buscar rol…"
+      getRowLabel={(r) => r.name}
       getRowId={(r) => r.roleId}
       getRowChecked={(r) => r.checked}
       onToggle={(roleId, checked) => {
@@ -197,6 +240,7 @@ function RolesTab({ appId }: { appId: number }) {
           void bind.mutateAsync({ id: appId, roleId });
         }
       }}
+      bulkAction={appBulkAction(appId, bind, unbind, "roleId", "role-bulk")}
       renderRow={(r) => r.name}
     />
   );
@@ -208,7 +252,7 @@ function UsersTab({ appId }: { appId: number }) {
   const unbind = useUnbindAppUser();
   const pending = bind.isPending || unbind.isPending;
   return (
-    <BindingTab
+    <BindingTab<AppUserChecked>
       entityId={appId}
       listTestIdPrefix="app-bindings"
       data={users.data}
@@ -216,6 +260,8 @@ function UsersTab({ appId }: { appId: number }) {
       isPending={pending}
       emptyText="No hay usuarios creados."
       toggleIdPrefix="user-toggle"
+      searchPlaceholder="Buscar usuario…"
+      getRowLabel={(u) => u.username}
       getRowId={(u) => u.userId}
       getRowChecked={(u) => u.checked}
       onToggle={(userId, checked) => {
@@ -225,6 +271,7 @@ function UsersTab({ appId }: { appId: number }) {
           void bind.mutateAsync({ id: appId, userId });
         }
       }}
+      bulkAction={appBulkAction(appId, bind, unbind, "userId", "user-bulk")}
       renderRow={(u) => u.username}
     />
   );
@@ -236,7 +283,7 @@ function RoutesTab({ appId }: { appId: number }) {
   const unbind = useUnbindAppRoute();
   const pending = bind.isPending || unbind.isPending;
   return (
-    <BindingTab
+    <BindingTab<AppRouteChecked>
       entityId={appId}
       listTestIdPrefix="app-bindings"
       data={routes.data}
@@ -244,6 +291,8 @@ function RoutesTab({ appId }: { appId: number }) {
       isPending={pending}
       emptyText="No hay rutas creadas."
       toggleIdPrefix="route-toggle"
+      searchPlaceholder="Buscar ruta…"
+      getRowLabel={(r) => `${r.name} ${r.path}`.trim()}
       getRowId={(r) => r.routeId}
       getRowChecked={(r) => r.checked}
       onToggle={(routeId, checked) => {
@@ -253,6 +302,7 @@ function RoutesTab({ appId }: { appId: number }) {
           void bind.mutateAsync({ id: appId, routeId });
         }
       }}
+      bulkAction={appBulkAction(appId, bind, unbind, "routeId", "route-bulk")}
       renderRow={(r) => (
         <span>
           {r.name}
@@ -269,7 +319,7 @@ function MicroservicesTab({ appId }: { appId: number }) {
   const unbind = useUnbindAppMicroservice();
   const pending = bind.isPending || unbind.isPending;
   return (
-    <BindingTab
+    <BindingTab<AppMicroserviceChecked>
       entityId={appId}
       listTestIdPrefix="app-bindings"
       data={services.data}
@@ -277,6 +327,8 @@ function MicroservicesTab({ appId }: { appId: number }) {
       isPending={pending}
       emptyText="No hay microservicios creados."
       toggleIdPrefix="microservice-toggle"
+      searchPlaceholder="Buscar microservicio…"
+      getRowLabel={(m) => `${m.serviceId} ${m.kind}`}
       getRowId={(m) => m.microserviceId}
       getRowChecked={(m) => m.checked}
       onToggle={(microserviceId, checked) => {
@@ -286,6 +338,7 @@ function MicroservicesTab({ appId }: { appId: number }) {
           void bind.mutateAsync({ id: appId, microserviceId });
         }
       }}
+      bulkAction={appBulkAction(appId, bind, unbind, "microserviceId", "microservice-bulk")}
       renderRow={(m) => (
         <span>
           <span className="font-mono">{m.serviceId}</span>
