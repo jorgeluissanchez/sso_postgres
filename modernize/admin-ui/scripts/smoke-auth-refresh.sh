@@ -13,7 +13,7 @@
 #   - /auth/logout revokes the family and clears the cookie.
 #   - Multi-device logins produce independent families.
 #
-# 8 checks:
+# 10 checks:
 #   1. Login sets sso_refresh cookie with HttpOnly + SameSite=Strict
 #      + Path=/ + Max-Age=2592000 (30 days, mirrors store TTL).
 #   2. /auth/refresh with the login cookie returns 200 + a NEW
@@ -36,6 +36,17 @@
 #      user-enumeration / PII leak fixed in this branch via
 #      SecurityConfig hasAuthority("ADMIN") at both the
 #      auth-center and api-gateway layers — commits 11 + 12).
+#  10. /getToken is REMOVED end-to-end:
+#      - anonymous GET returns 401 (gateway SecurityConfig
+#        anyExchange().authenticated() bounces it; controller is
+#        gone, so no fallback path remains — commits 17-19);
+#      - authenticated GET returns 404 (no matching route
+#        predicate after commit 20; even if the route came back,
+#        auth-center has no handler for /getToken any more).
+#      Integration tests (Commit 21) pin the auth-center-side
+#      contract at the unit-test layer; this smoke verifies the
+#      gateway-side behaviour matches what callers will actually
+#      see.
 #
 # Run from project root (assumes the stack is up):
 #   bash admin-ui/scripts/smoke-auth-refresh.sh
@@ -184,7 +195,7 @@ curl -sS -o /dev/null -D /tmp/login2-hdr.$$ -X POST "$GATEWAY/login" \
   -H "Content-Type: application/json" \
   -c "$JAR2" \
   -d "{\"username\":\"$ADMIN_USER\",\"password\":\"$ADMIN_PASSWORD\"}"
-trap 'rm -f "$JAR" "$JAR2" "$V1_JAR" "$V2_JAR" "$PRE_JAR" "$EMPTY_JAR" "$A_JAR" "$B_JAR" "$DEV_A" "$DEV_B" /tmp/smoke-refresh-body.$$ /tmp/smoke-refresh-hdr.$$ /tmp/login-body.$$ /tmp/login-hdr.$$ /tmp/login2-hdr.$$ /tmp/reuse-body.$$ /tmp/v2-body.$$ /tmp/empty-body.$$ /tmp/anon-users-body.$$ /tmp/logout-hdr.$$' EXIT
+trap 'rm -f "$JAR" "$JAR2" "$V1_JAR" "$V2_JAR" "$PRE_JAR" "$EMPTY_JAR" "$A_JAR" "$B_JAR" "$DEV_A" "$DEV_B" /tmp/smoke-refresh-body.$$ /tmp/smoke-refresh-hdr.$$ /tmp/login-body.$$ /tmp/login-hdr.$$ /tmp/login2-hdr.$$ /tmp/reuse-body.$$ /tmp/v2-body.$$ /tmp/empty-body.$$ /tmp/anon-users-body.$$ /tmp/logout-hdr.$$ /tmp/gettoken-anon-body.$$ /tmp/gettoken-auth-body.$$' EXIT
 
 LOGOUT_HTTP=$(curl -sS -o /dev/null -D /tmp/logout-hdr.$$ -w '%{http_code}' \
   -X POST "$GATEWAY/api/auth/logout" -b "$JAR2")
@@ -331,6 +342,47 @@ if echo "$ANON_USERS_BODY" | grep -q '"username"'; then
   bad "Anonymous /getUsersSSO body looks like the user enumeration leak: $ANON_USERS_BODY"
 else
   ok "Anonymous body does not contain user enumeration payload"
+fi
+
+# ---------- 10. /getToken is gone ----------
+hr
+echo ">>> 10. GET /getToken is removed: 401 anonymous, 404 authenticated (closed in commits 17-19)"
+
+# Anonymous: gateway SecurityConfig runs BEFORE route forwarding in
+# the Spring Cloud Gateway filter chain, so a /getToken with no
+# Bearer hits .anyExchange().authenticated() and gets 401 at the
+# gateway boundary. The controller method is also gone (Commit 17)
+# and the auth-center SecurityConfig no longer permitAll's the
+# path (Commit 18), so even if the gateway forwarded it auth-center
+# would not authenticate it. Two layers, same outcome.
+GETTOK_ANON_HTTP=$(curl -sS -o /tmp/gettoken-anon-body.$$ -w '%{http_code}' \
+  "$GATEWAY/getToken?refreshToken=ANY_GARBAGE")
+if [ "$GETTOK_ANON_HTTP" = "401" ]; then
+  ok "Anonymous /getToken returns 401"
+else
+  bad "Anonymous /getToken expected 401, got $GETTOK_ANON_HTTP"
+  cat /tmp/gettoken-anon-body.$$ || true
+fi
+
+# Authenticated: a valid Bearer passes the gateway SecurityConfig
+# check (the SecurityContext has the ADMIN role for the admin
+# user, so anyExchange().authenticated() allows it through), but
+# /getToken no longer appears in any route predicate (Commit 20
+# removed it from the /login,/getApiToken,... comma-separated
+# Path list), and the discovery locator only routes dynamic
+# service-id-prefixed paths. The gateway responds 404. As a final
+# defense-in-depth layer, auth-center's AuthController has no
+# /getToken handler left — the integration tests (Commit 21) pin
+# this contract at the unit-test layer; this smoke verifies the
+# gateway-side behavior matches what real callers will see.
+GETTOK_AUTH_HTTP=$(curl -sS -o /tmp/gettoken-auth-body.$$ -w '%{http_code}' \
+  -H "Authorization: Bearer $ACCESS_JWT" \
+  "$GATEWAY/getToken?refreshToken=ANY_GARBAGE")
+if [ "$GETTOK_AUTH_HTTP" = "404" ]; then
+  ok "Authenticated /getToken returns 404 (route predicate deleted)"
+else
+  bad "Authenticated /getToken expected 404, got $GETTOK_AUTH_HTTP"
+  cat /tmp/gettoken-auth-body.$$ || true
 fi
 
 # ---------- summary ----------
