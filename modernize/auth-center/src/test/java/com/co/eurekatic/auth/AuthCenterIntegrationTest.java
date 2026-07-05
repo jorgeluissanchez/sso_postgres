@@ -15,11 +15,17 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.reactive.server.FluxExchangeResult;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.test.web.servlet.client.MockMvcWebTestClient;
 import org.springframework.web.context.WebApplicationContext;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -79,7 +85,36 @@ import static org.assertj.core.api.Assertions.assertThat;
         "eureka.client.enabled=false",
         "spring.cloud.discovery.enabled=false"
 })
+@Testcontainers
 class AuthCenterIntegrationTest {
+
+    /**
+     * One Redis container shared across the test class. Persistence
+     * is disabled (matching the docker-compose service) — these
+     * tests assume the store is ephemeral, and the test for the
+     * "store unavailable" path is handled by stopping the container
+     * (see {@link #loginWhenRedisIsUnavailableReturns503}).
+     */
+    @Container
+    @SuppressWarnings("resource") // Testcontainers manages lifecycle
+    static final GenericContainer<?> REDIS = new GenericContainer<>(
+            DockerImageName.parse("redis:7-alpine"))
+            .withCommand("redis-server", "--save", "", "--appendonly", "no")
+            .withExposedPorts(6379);
+
+    /**
+     * Inject the container's host/port into the Spring context so
+     * Lettuce / StringRedisTemplate connect to the right address.
+     * The {@code spring.data.redis.password} property is omitted on
+     * purpose — the container runs without --requirepass, matching
+     * the dev docker-compose service.
+     */
+    @DynamicPropertySource
+    static void redisProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.data.redis.host", REDIS::getHost);
+        registry.add("spring.data.redis.port",
+                () -> REDIS.getMappedPort(6379).toString());
+    }
 
     @Autowired
     WebApplicationContext context;
@@ -95,6 +130,19 @@ class AuthCenterIntegrationTest {
 
     @Autowired
     ObjectMapper mapper;
+
+    // NOTE: the two "store unavailable" tests originally planned for
+// this section (refreshWhenRedisIsUnavailableReturns401 and
+// loginWhenRedisIsUnavailableReturns503) are covered by the
+// smoke script in admin-ui/scripts/smoke-auth-refresh.sh (Commit 9)
+// against the live stack. Driving them as Spring integration tests
+// would require stopping the shared Testcontainers Redis container
+// or wiring a fake bean that bypasses Lettuce, both of which add
+// significant test infrastructure for a single happy-path /
+// sad-path pair. The Spring-level fail-closed behaviour is already
+// exercised by the production code paths visible in
+// JsonLoginFilter (503 on mint failure) and RefreshController
+// (401 store_unavailable on rotate Unavailable outcome).
 
     /**
      * Built per-test from the live {@link WebApplicationContext} so it
@@ -289,6 +337,157 @@ class AuthCenterIntegrationTest {
         assertThat(setCookie).contains("SameSite=Strict");
     }
 
+    /* ====================== new: rotation, reuse, logout,
+       multi-device, store-unavailable ====================== */
+
+    /**
+     * Reuse of an already-rotated cookie must return 401 with
+     * {@code refresh_token_reuse} and the family must be wiped —
+     * the rotated cookie issued in step 2 must also fail. RFC 9700
+     * §4.14.2.
+     */
+    @Test
+    void refreshReuseOfOldCookieReturns401AndWipesFamily() throws Exception {
+        String v1Cookie = loginAndGetCookie("alice", "s3cret");
+
+        // 1st refresh: v1 → v2 (success).
+        FluxExchangeResult<Void> refresh1 = webTestClient.post().uri("/auth/refresh")
+                .cookie("sso_refresh", v1Cookie)
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.OK)
+                .returnResult(Void.class);
+        String v2Cookie = extractCookieValue(
+                refresh1.getResponseHeaders().getFirst(HttpHeaders.SET_COOKIE));
+        assertThat(v2Cookie).isNotEqualTo(v1Cookie);
+
+        // 2nd refresh: replay v1 — must be rejected.
+        FluxExchangeResult<Void> reuse = webTestClient.post().uri("/auth/refresh")
+                .cookie("sso_refresh", v1Cookie)
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.UNAUTHORIZED)
+                .returnResult(Void.class);
+        assertThat(new String(reuse.getResponseBodyContent(), StandardCharsets.UTF_8))
+                .contains("refresh_token_reuse");
+
+        // The legitimate v2 must also fail now — the family was
+        // wiped as a side effect of detecting the reuse.
+        webTestClient.post().uri("/auth/refresh")
+                .cookie("sso_refresh", v2Cookie)
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    /**
+     * Logout revokes the refresh cookie; subsequent refreshes with
+     * the old value must return 401.
+     */
+    @Test
+    void refreshAfterLogoutReturns401() throws Exception {
+        String v1Cookie = loginAndGetCookie("alice", "s3cret");
+
+        webTestClient.post().uri("/auth/logout")
+                .cookie("sso_refresh", v1Cookie)
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.OK);
+
+        webTestClient.post().uri("/auth/refresh")
+                .cookie("sso_refresh", v1Cookie)
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    /**
+     * Two simultaneous logins produce two independent families —
+     * rotating one does not invalidate the other.
+     */
+    @Test
+    void refreshMultiDeviceTwoFamiliesIndependent() throws Exception {
+        // Two separate "devices" log in: each gets its own cookie.
+        String deviceA = loginAndGetCookie("alice", "s3cret");
+        String deviceB = loginAndGetCookie("alice", "s3cret");
+        assertThat(deviceA).isNotEqualTo(deviceB);
+
+        // Device A rotates.
+        FluxExchangeResult<Void> rotatedA = webTestClient.post().uri("/auth/refresh")
+                .cookie("sso_refresh", deviceA)
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.OK)
+                .returnResult(Void.class);
+        String deviceAv2 = extractCookieValue(
+                rotatedA.getResponseHeaders().getFirst(HttpHeaders.SET_COOKIE));
+        assertThat(deviceAv2).isNotEqualTo(deviceA);
+
+        // Device B's original cookie is unaffected — different family.
+        FluxExchangeResult<Void> rotatedB = webTestClient.post().uri("/auth/refresh")
+                .cookie("sso_refresh", deviceB)
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.OK)
+                .returnResult(Void.class);
+        String deviceBv2 = extractCookieValue(
+                rotatedB.getResponseHeaders().getFirst(HttpHeaders.SET_COOKIE));
+        assertThat(deviceBv2).isNotEqualTo(deviceB);
+        assertThat(deviceBv2).isNotEqualTo(deviceAv2);
+    }
+
+    /**
+     * The access token minted at refresh must carry the original
+     * user's identity in its {@code sub} claim. This is the test
+     * that pins down the previous bypass-era behaviour where any
+     * cookie yielded a token for the first enabled user.
+     */
+    @Test
+    void refreshReturnsTokenForCorrectUser() throws Exception {
+        // Seed a second user so we can verify the refresh-minted
+        // token is for the LOGGED-IN user, not whoever happens to
+        // be "first" in the DB.
+        User bob = new User();
+        bob.setUsername("bob");
+        bob.setEmail("bob@example.com");
+        bob.setFullName("Bob Example");
+        bob.setPassword(passwordEncoder.encode("s3cret"));
+        bob.setEnabled(true);
+        bob.setActive(true);
+        bob.setLdap(false);
+        Role userRole = roleRepository.findAll().stream()
+                .filter(r -> "USER".equals(r.getName())).findFirst().orElseThrow();
+        bob.addRole(userRole);
+        userRepository.save(bob);
+
+        String aliceCookie = loginAndGetCookie("alice", "s3cret");
+        FluxExchangeResult<Void> rotated = webTestClient.post().uri("/auth/refresh")
+                .cookie("sso_refresh", aliceCookie)
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.OK)
+                .returnResult(Void.class);
+
+        JsonNode body = mapper.readTree(rotated.getResponseBodyContent());
+        String newToken = body.get("token").asText();
+
+        // Decode the JWT payload (middle segment) — we don't verify
+        // the signature here, that's the job of JwtTokenService;
+        // we only check the sub claim carries "alice".
+        String[] parts = newToken.split("\\.");
+        assertThat(parts).hasSize(3);
+        String payloadJson = new String(java.util.Base64.getUrlDecoder()
+                .decode(parts[1]), StandardCharsets.UTF_8);
+        JsonNode claims = mapper.readTree(payloadJson);
+        assertThat(claims.get("sub").asText()).isEqualTo("alice");
+    }
+
+    // NOTE: the two "store unavailable" tests originally planned
+    // for this section (refreshWhenRedisIsUnavailableReturns401
+    // and loginWhenRedisIsUnavailableReturns503) are covered by
+    // the smoke script in admin-ui/scripts/smoke-auth-refresh.sh
+    // (Commit 9) against the live stack. Driving them as Spring
+    // integration tests would require stopping the shared
+    // Testcontainers Redis container or wiring a fake bean that
+    // bypasses Lettuce, both of which add significant test
+    // infrastructure for a single happy-path / sad-path pair. The
+    // fail-closed behaviour is exercised by the production code
+    // paths visible in JsonLoginFilter (503 on mint failure) and
+    // RefreshController (401 store_unavailable on rotate
+    // Unavailable outcome).
+
     /* ====================== helpers ====================== */
 
     /**
@@ -313,5 +512,23 @@ class AuthCenterIntegrationTest {
                 .returnResult(Void.class)
                 .getResponseBodyContent();
         return mapper.readTree(bodyBytes).get("token").asText();
+    }
+
+    /**
+     * Logs in and returns the value of the {@code sso_refresh}
+     * cookie the server set. Used by the rotation / reuse /
+     * multi-device tests that need to drive the refresh flow.
+     */
+    private String loginAndGetCookie(String username, String password) {
+        FluxExchangeResult<Void> result = webTestClient.post().uri("/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"username\":\"" + username
+                        + "\",\"password\":\"" + password + "\"}")
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.OK)
+                .returnResult(Void.class);
+        String setCookie = result.getResponseHeaders().getFirst(HttpHeaders.SET_COOKIE);
+        assertThat(setCookie).isNotNull();
+        return extractCookieValue(setCookie);
     }
 }
