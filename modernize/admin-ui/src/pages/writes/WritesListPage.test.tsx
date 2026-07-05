@@ -764,4 +764,129 @@ describe("WritesListPage", () => {
     });
     expect(colCalls.length).toBe(0);
   });
+
+  /* ====================== column picker Tier 1 toolbar ====================== */
+
+  it("ColumnPicker surfaces a search + bulk-action toolbar when the table has ≥5 columns", async () => {
+    const ms = mkMicroservice({
+      id: 7,
+      instanceName: "postgres",
+      dialect: "postgres",
+    });
+    const tables: TableInfo[] = [
+      { dialect: "postgres", schema: "public", name: "orders", remarks: null },
+    ];
+    const columns: ColumnInfo[] = [
+      "ID",
+      "CUSTOMER_NAME",
+      "EMAIL",
+      "TOTAL",
+      "STATUS",
+      "CREATED_AT",
+    ].map((name, i) => ({
+      dialect: "postgres",
+      schema: "public",
+      table: "orders",
+      name,
+      dataType: i === 0 ? "bigint" : "varchar",
+      nullable: name !== "ID",
+      primaryKey: name === "ID",
+    }));
+    const spy = buildFetchSpy({
+      writes: [],
+      microservices: [ms],
+      tablesByInstance: { "postgres::postgres": tables },
+      columnsByTable: { "postgres::public::orders": columns },
+    });
+    vi.stubGlobal("fetch", spy);
+
+    renderPage();
+    await userEvent.click(await screen.findByTestId("new-write"));
+    await userEvent.type(screen.getByLabelText(/UUID/i), "smoke-cols-search");
+
+    await userEvent.selectOptions(screen.getByTestId("write-microservice"), "7");
+    const pickerSelect = await screen.findByTestId("write-table-picker-select");
+    await userEvent.selectOptions(pickerSelect, "public.orders");
+
+    const panel = await screen.findByTestId("write-columns-picker");
+
+    // 6 columns returned → search input shows (≥5 threshold).
+    expect(within(panel).getByTestId("write-columns-picker-search")).toBeInTheDocument();
+    expect(within(panel).getByTestId("write-columns-picker-select-all")).toBeInTheDocument();
+    expect(within(panel).getByTestId("write-columns-picker-clear-visible")).toBeInTheDocument();
+
+    // Counter reads "6 visibles · 0 seleccionadas" before any click.
+    const counter = within(panel).getByTestId("write-columns-picker-visible-count");
+    expect(counter).toHaveTextContent("6 visibles");
+    expect(counter).toHaveTextContent("0 seleccionadas");
+
+    // Type "E" — EMAIL, CUSTOMER_NAME, CREATED_AT all contain
+    // an "e" (case-insensitive). ID, TOTAL, STATUS don't.
+    await userEvent.type(
+      within(panel).getByTestId("write-columns-picker-search"),
+      "E",
+    );
+    expect(within(panel).queryByTestId("write-columns-picker-checkbox-ID")).not.toBeInTheDocument();
+    expect(within(panel).getByTestId("write-columns-picker-checkbox-EMAIL")).toBeInTheDocument();
+    expect(within(panel).getByTestId("write-columns-picker-checkbox-CUSTOMER_NAME")).toBeInTheDocument();
+    expect(within(panel).getByTestId("write-columns-picker-checkbox-CREATED_AT")).toBeInTheDocument();
+    expect(counter).toHaveTextContent("3 visibles");
+
+    // "Seleccionar visibles" toggles everything currently visible
+    // on; the chip list reflects the new selections.
+    await userEvent.click(within(panel).getByTestId("write-columns-picker-select-all"));
+    const cols = screen.getByTestId("write-columns");
+    await waitFor(() => {
+      expect(within(cols).getByText("EMAIL")).toBeInTheDocument();
+      expect(within(cols).getByText("CUSTOMER_NAME")).toBeInTheDocument();
+    });
+
+    // Clear visible resets the chip list for the visible set.
+    await userEvent.click(within(panel).getByTestId("write-columns-picker-clear-visible"));
+    await waitFor(() => {
+      expect(within(cols).queryByText("EMAIL")).not.toBeInTheDocument();
+      expect(within(cols).queryByText("CUSTOMER_NAME")).not.toBeInTheDocument();
+    });
+  });
+
+  it("ColumnPicker hides the search toolbar when the table has fewer than 5 columns", async () => {
+    const ms = mkMicroservice({
+      id: 7,
+      instanceName: "postgres",
+      dialect: "postgres",
+    });
+    const tables: TableInfo[] = [
+      { dialect: "postgres", schema: "public", name: "small", remarks: null },
+    ];
+    // Only 3 columns — under the threshold.
+    const columns: ColumnInfo[] = ["ID", "NAME", "STATUS"].map((name) => ({
+      dialect: "postgres",
+      schema: "public",
+      table: "small",
+      name,
+      dataType: "varchar",
+      nullable: name !== "ID",
+      primaryKey: name === "ID",
+    }));
+    const spy = buildFetchSpy({
+      writes: [],
+      microservices: [ms],
+      tablesByInstance: { "postgres::postgres": tables },
+      columnsByTable: { "postgres::public::small": columns },
+    });
+    vi.stubGlobal("fetch", spy);
+
+    renderPage();
+    await userEvent.click(await screen.findByTestId("new-write"));
+    await userEvent.selectOptions(screen.getByTestId("write-microservice"), "7");
+    const pickerSelect = await screen.findByTestId("write-table-picker-select");
+    await userEvent.selectOptions(pickerSelect, "public.small");
+
+    const panel = await screen.findByTestId("write-columns-picker");
+    // Search toolbar hidden — keeps the panel tidy for the
+    // common 2-3 column case.
+    expect(within(panel).queryByTestId("write-columns-picker-search")).not.toBeInTheDocument();
+    // Checkboxes still work as before.
+    expect(within(panel).getByTestId("write-columns-picker-checkbox-ID")).toBeInTheDocument();
+  });
 });
