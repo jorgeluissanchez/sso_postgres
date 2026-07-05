@@ -33,6 +33,19 @@ import java.util.List;
  *   <li>{@code OPTIONS /**} (CORS preflight)</li>
  * </ul>
  *
+ * <p>Paths that require authentication with a specific role:
+ * <ul>
+ *   <li>{@code /getUsersSSO} — requires {@code ADMIN}. Anonymous
+ *       callers cannot see user enumeration (the default would
+ *       otherwise reach auth-center through the gateway with no
+ *       credentials). Uses {@code hasAuthority} not {@code hasRole}
+ *       for the same reason as auth-center: {@link
+ *       ReactiveJwtAuthenticationFilter} stores role names WITHOUT
+ *       the {@code ROLE_} prefix. Defense-in-depth: even though
+ *       auth-center re-checks the role after the gateway forwards,
+ *       rejecting here keeps the request off the wire.</li>
+ * </ul>
+ *
  * <p>All other paths require a valid Bearer token, validated by
  * {@link ReactiveJwtAuthenticationFilter}. The filter runs at the
  * {@code AUTHENTICATION} order so its SecurityContext is in place
@@ -84,7 +97,15 @@ public class GatewaySecurityConfig {
                         // unauthenticated. auth-center enforces its own
                         // auth on business endpoints.
                         .pathMatchers("/login", "/getToken", "/getApiToken",
-                                "/getInfoUser", "/getUsersSSO", "/googleLogin").permitAll()
+                                "/getInfoUser", "/googleLogin").permitAll()
+                        // /getUsersSSO discloses usernames + emails + full
+                        // names of every active user. Reject unauthenticated
+                        // callers at the gateway boundary BEFORE the
+                        // request leaves for auth-center. JWT roles on the
+                        // reactive SecurityContext are bare role names
+                        // (no ROLE_ prefix), so hasAuthority("ADMIN") is
+                        // the correct check.
+                        .pathMatchers("/getUsersSSO").hasAuthority("ADMIN")
                         .pathMatchers("/auth/refresh", "/auth/logout").permitAll()
                         // /api/** surface for the admin-ui SPA. The auth
                         // flow paths mirror the legacy ones above (the
