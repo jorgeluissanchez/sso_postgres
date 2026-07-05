@@ -305,11 +305,16 @@ class SsoAdminIntegrationTest {
         String activationToken = created.getTokenActivation();
         assertThat(activationToken).isNotBlank();
 
-        // No Authorization header — the link from the email does NOT include one.
-        client.get().uri(uri -> uri.path("/activateAccount")
-                        .queryParam("token", activationToken)
-                        .queryParam("password", "newpass1")
-                        .build())
+        // POST + JSON body. The password now travels in the body,
+        // not the URL — see UserController.activateAccount for the
+        // accompanying HTTP verb flip. No Authorization header
+        // because the link from the email does not include one.
+        String activateBody = mapper.writeValueAsString(Map.of(
+                "token", activationToken,
+                "password", "newpass1"));
+        client.post().uri("/activateAccount")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(activateBody)
                 .exchange()
                 .expectStatus().isOk();
 
@@ -322,13 +327,33 @@ class SsoAdminIntegrationTest {
     }
 
     @Test
-    void activateAccountWithUnknownTokenReturns404() {
-        client.get().uri(uri -> uri.path("/activateAccount")
-                        .queryParam("token", "does-not-exist")
-                        .queryParam("password", "newpass1")
-                        .build())
+    void activateAccountWithUnknownTokenReturns404() throws Exception {
+        String body = mapper.writeValueAsString(Map.of(
+                "token", "does-not-exist",
+                "password", "newpass1"));
+        client.post().uri("/activateAccount")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
                 .exchange()
                 .expectStatus().isNotFound();
+    }
+
+    @Test
+    void activateAccountRejectsShortPassword() throws Exception {
+        // @Size(min = 6) on the TokenPasswordRequest.password field
+        // turns "123" into a 400 BEFORE the service is reached, so
+        // the existing service-level invariant (IllegalArgumentException
+        // → 400 INVALID_REQUEST) is still defended by a higher layer.
+        // This pins the controller-side validation contract that
+        // closed the GET-with-password-in-query leak surface.
+        String body = mapper.writeValueAsString(Map.of(
+                "token", "anything",
+                "password", "123"));
+        client.post().uri("/activateAccount")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isBadRequest();
     }
 
     @Test
