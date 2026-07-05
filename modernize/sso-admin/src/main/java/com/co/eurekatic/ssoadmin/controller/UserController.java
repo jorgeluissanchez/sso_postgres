@@ -2,6 +2,7 @@ package com.co.eurekatic.ssoadmin.controller;
 
 import com.co.eurekatic.ssoadmin.dto.BindUserRoleRequest;
 import com.co.eurekatic.ssoadmin.dto.CreateAccountRequest;
+import com.co.eurekatic.ssoadmin.dto.TokenPasswordRequest;
 import com.co.eurekatic.ssoadmin.dto.UpdateAccountRequest;
 import com.co.eurekatic.ssoadmin.dto.UserResponse;
 import com.co.eurekatic.ssoadmin.service.UserAdminService;
@@ -50,11 +51,17 @@ public class UserController {
      * Public endpoint (no auth) — the user arrives here from the
      * activation email link. Returns 200 with an empty body on
      * success.
+     *
+     * <p>POST + JSON body (not GET + query string): the activation
+     * email hands the user a token (delivered in the link the user
+     * clicks); the SPA renders a password form on the landing
+     * page and POSTs the body here. The password never travels in
+     * the URL — no leak via access logs, proxy logs, browser
+     * history, or the {@code Referer} header.
      */
-    @GetMapping("/activateAccount")
-    public ResponseEntity<Void> activateAccount(@RequestParam String token,
-                                                @RequestParam String password) {
-        service.activateAccount(token, password);
+    @PostMapping("/activateAccount")
+    public ResponseEntity<Void> activateAccount(@Valid @RequestBody TokenPasswordRequest req) {
+        service.activateAccount(req.token(), req.password());
         return ResponseEntity.ok().build();
     }
 
