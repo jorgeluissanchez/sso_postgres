@@ -105,7 +105,23 @@ public class WriteDefinitionAdminService {
         w.removeRole(r);
     }
 
-    public record RoleChecked(Long id, String name, boolean bound) {}
+    /**
+     * Compact DTO matching the {@code EndpointService.RoleChecked}
+     * shape: id plus a flag telling the admin UI whether the
+     * role is currently bound to the write. The field names use
+     * the suffixed convention ({@code roleId} + {@code checked})
+     * to match the rest of the module — see AppService,
+     * QueryAdminService, and the
+     * {@code admin-ui/scripts/smoke-write-roles.sh} contract.
+     *
+     * <p>Note: there is currently no admin-ui consumer for
+     * write-definition bindings (no page renders this endpoint
+     * yet). The fix is preventive — when that page is built,
+     * it will follow the same {@code roleId} + {@code checked}
+     * convention as the other entities, and this smoke
+     * guarantees the contract holds.
+     */
+    public record RoleChecked(Long roleId, String name, boolean checked) {}
 
     @Transactional(readOnly = true)
     public List<RoleChecked> getRolesForWriteChecked(Long writeId) {
