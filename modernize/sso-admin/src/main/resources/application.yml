@@ -126,8 +126,8 @@ sso:
     company: ${SSO_EMAIL_COMPANY:Example Inc.}
     app-name: ${SSO_EMAIL_APP_NAME:SSO Modernizado}
     logo-url: ${SSO_EMAIL_LOGO_URL:https://www.example.com/img/logo.png}
-    activation-url: ${SSO_ACTIVATION_URL:http://localhost:8080/sso-admin/activateAccount}
-    restore-url: ${SSO_RESTORE_URL:http://localhost:8080/sso-admin/activateAccount}
+    activation-url: ${SSO_ACTIVATION_URL:http://localhost:8080/admin/activate}
+    restore-url: ${SSO_RESTORE_URL:http://localhost:8080/admin/restore-password}
     activation-template: activation-account.html
     restore-template: restore-password-account.html
 
