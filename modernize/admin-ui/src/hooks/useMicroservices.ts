@@ -17,6 +17,14 @@ export function useMicroservices() {
   // out-of-band is the container's runtime state (UP /
   // PROVISIONING / DOWN). For REST-only lists the query
   // sits idle — no waste.
+  //
+  // `refetchIntervalInBackground: false` suspends the polling
+  // when the tab is hidden. The admin opens the page, checks
+  // container state, then switches tabs — the polling should
+  // not consume backend cycles while nobody is looking. The
+  // default `refetchOnWindowFocus: true` re-fetches the
+  // moment the admin comes back to the tab, so freshness
+  // is preserved on focus.
   return useQuery({
     queryKey: microserviceKeys.list(),
     queryFn: () => microservicesApi.list(),
@@ -25,6 +33,7 @@ export function useMicroservices() {
       if (!rows) return false;
       return rows.some((m) => m.kind === "QUERY") ? 5000 : false;
     },
+    refetchIntervalInBackground: false,
   });
 }
 
