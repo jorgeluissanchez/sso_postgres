@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
@@ -41,6 +42,30 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of(
                 "code", "BAD_REQUEST",
                 "message", ex.getMessage() == null ? "Bad request" : ex.getMessage()));
+    }
+
+    /**
+     * Missing required {@code @RequestParam} (e.g.
+     * {@code GET /columns?dialect=...&schema=...}
+     * with no {@code table=...}). Spring 7 ships an
+     * opinionated default for this, but our catch-all
+     * {@link #handleAny(Exception)} below catches it first
+     * and returns 500 (despite 400 being the only honest
+     * answer). The admin-ui's {@code useQuery} error
+     * branch treats 400 vs 500 differently — a 500 looks
+     * like the server is on fire and hides the actual
+     * validation message.
+     *
+     * <p>Mapping this explicitly to 400 also matches the
+     * envelope ({@code code="BAD_REQUEST"}) every other
+     * client-input error uses, so the caller can render
+     * a uniform "La columna 'foo' es requerida" toast.
+     */
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<Map<String, Object>> handleMissingParam(MissingServletRequestParameterException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of(
+                "code", "BAD_REQUEST",
+                "message", "falta el parámetro requerido '" + ex.getParameterName() + "'"));
     }
 
     @ExceptionHandler(Exception.class)
