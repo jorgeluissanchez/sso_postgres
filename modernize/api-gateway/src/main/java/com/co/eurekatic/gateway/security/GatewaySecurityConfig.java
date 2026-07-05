@@ -96,7 +96,15 @@ public class GatewaySecurityConfig {
                         // point, so the gateway must let these through
                         // unauthenticated. auth-center enforces its own
                         // auth on business endpoints.
-                        .pathMatchers("/login", "/getToken", "/getApiToken",
+                        //
+                        // /getToken removed in this branch (was an MVP
+                        // placeholder whose refreshToken param was
+                        // decorative). Without this matcher, an
+                        // anonymous /getToken falls through to
+                        // anyExchange().authenticated() and gets a 401
+                        // at the gateway boundary (defense-in-depth
+                        // vs auth-center's servlet-side 401).
+                        .pathMatchers("/login", "/getApiToken",
                                 "/getInfoUser", "/googleLogin").permitAll()
                         // /getUsersSSO discloses usernames + emails + full
                         // names of every active user. Reject unauthenticated
