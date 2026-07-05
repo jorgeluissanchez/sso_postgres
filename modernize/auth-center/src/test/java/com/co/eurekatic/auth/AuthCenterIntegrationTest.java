@@ -308,6 +308,50 @@ class AuthCenterIntegrationTest {
         assertThat(usernames).contains("alice", "bob");
     }
 
+    /* ====================== /getToken absent surface ====================== */
+
+    @Test
+    void getTokenAnonymousReturns401() {
+        // GET /getToken?refreshToken=... used to accept any
+        // non-empty refreshToken and return a fresh access token
+        // for the bearer of the Authorization header. The
+        // refreshToken parameter was decorative (no store check).
+        // The endpoint was removed in this branch. Without a
+        // permit-all SecurityConfig rule for /getToken,
+        // anonymous requests now fall through to
+        // anyRequest().authenticated() and the unauthorized
+        // entry point returns 401.
+        //
+        // If a future maintainer re-adds /getToken to the
+        // permit-all chain by accident (e.g. copying an old
+        // rule list), this test catches the regression before
+        // it ships.
+        webTestClient.get().uri(uriBuilder -> uriBuilder
+                        .path("/getToken")
+                        .queryParam("refreshToken", "anything")
+                        .build())
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
+    void getTokenAuthenticatedReturns404() throws Exception {
+        // Even when the caller holds a valid Bearer token, the
+        // GET /getToken controller method is gone. Spring MVC's
+        // default no-handler path returns 404. This pins the
+        // shape end-to-end: an attacker with a stolen access
+        // token cannot trigger any code path through /getToken
+        // — there is no code path to trigger.
+        String aliceToken = loginAndGetToken("alice", "s3cret");
+        webTestClient.get().uri(uriBuilder -> uriBuilder
+                        .path("/getToken")
+                        .queryParam("refreshToken", "ANY_GARBAGE")
+                        .build())
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + aliceToken)
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
     @Test
     void googleLoginReturns501() throws Exception {
         byte[] bodyBytes = webTestClient.post().uri("/googleLogin")
