@@ -88,6 +88,30 @@
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- Testcontainers core: we use GenericContainer with the
+             redis:7-alpine image rather than the dedicated
+             org.testcontainers:redis module, because the parent BOM
+             already imports testcontainers-bom and the dedicated
+             module adds nothing we need (we configure the image +
+             port manually anyway). The container is wired into the
+             Spring context via @DynamicPropertySource. -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- JUnit 5 integration for Testcontainers: provides the
+             @Testcontainers + @Container annotations that start /
+             stop the Redis container around the test class. The
+             `testcontainers` core artifact above does NOT pull this
+             in transitively. -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
