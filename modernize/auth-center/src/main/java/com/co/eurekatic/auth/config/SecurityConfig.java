@@ -29,11 +29,19 @@ import java.util.List;
  * <p>Public endpoints (no auth required):
  * <ul>
  *   <li>{@code POST /login}</li>
- *   <li>{@code GET /getToken}, {@code GET /getApiToken}, {@code GET /getInfoUser}</li>
+ *   <li>{@code GET /getApiToken}, {@code GET /getInfoUser}</li>
  *   <li>{@code POST /googleLogin} (stub returning 501)</li>
  *   <li>{@code /actuator/health} and {@code /actuator/info}</li>
  *   <li>{@code OPTIONS /**} (CORS preflight)</li>
  * </ul>
+ *
+ * <p><b>Note:</b> {@code GET /getToken?refreshToken=…} used to live
+ * in the permit-all list; it was an MVP placeholder whose
+ * {@code refreshToken} parameter was decorative (no store
+ * validation). It was removed because the surface was misleading
+ * and represented a future-bypass footgun. Clients use
+ * {@code POST /auth/refresh} (the cookie-based, store-backed
+ * counterpart) instead.
  *
  * <p>Endpoints that require authentication with a specific role:
  * <ul>
@@ -88,7 +96,15 @@ public class SecurityConfig {
                         // the cookie IS the credential. Logout is the same.
                         .requestMatchers("/auth/refresh", "/auth/logout").permitAll()
                         .requestMatchers("/login").permitAll()
-                        .requestMatchers("/getToken", "/getApiToken",
+                        // /getToken dropped in this branch - see the
+                        // class-level Note above. Without this matcher,
+                        // anonymous /getToken falls through to
+                        // anyRequest().authenticated() and the gateway
+                        // gets a clean 401 (no controller to reach).
+                        // Authenticated /getToken reaches a Spring MVC
+                        // 404 because AuthController no longer handles
+                        // the path.
+                        .requestMatchers("/getApiToken",
                                 "/getInfoUser", "/googleLogin").permitAll()
                         // /getUsersSSO discloses usernames + emails + full
                         // names of every active user. Anonymous callers must
