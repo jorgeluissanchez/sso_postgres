@@ -124,9 +124,19 @@ public class QueryAdminService {
     /**
      * Compact DTO matching the {@code EndpointService.RoleChecked}
      * shape: id plus a flag telling the admin UI whether the
-     * role is currently bound to the query.
+     * role is currently bound to the query. The field names use
+     * the suffixed convention ({@code roleId} + {@code checked})
+     * to match the rest of the module — see AppService, the
+     * admin-ui QueryRoleChecked type, and the
+     * {@code admin-ui/scripts/smoke-query-roles.sh} contract.
+     *
+     * <p>An earlier draft used bare {@code id} and {@code bound};
+     * the admin-ui binding tab was silently rendering
+     * {@code data-testid="role-toggle-undefined"} and firing
+     * {@code POST /query/{id}/role/undefined} because the JSON
+     * parser read {@code row.roleId} as undefined.
      */
-    public record RoleChecked(Long id, String name, boolean bound) {}
+    public record RoleChecked(Long roleId, String name, boolean checked) {}
 
     @Transactional(readOnly = true)
     public List<RoleChecked> getRolesForQueryChecked(Long queryId) {
