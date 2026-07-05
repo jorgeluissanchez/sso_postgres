@@ -56,6 +56,103 @@ The **api-gateway is the trust boundary**:
 
 If you need a service that's exposed directly to the internet (bypassing the gateway), it must re-validate the JWT itself.
 
+### Refresh-token flow (RFC 9700 §4.14)
+
+`auth-center` issues an `sso_refresh` cookie on `POST /login` and
+**rotates it on every `POST /api/auth/refresh`** per the OAuth 2.0
+Security Best Current Practice (RFC 9700, Jan 2025). The MVP flow
+that the legacy code shipped with — "any non-empty `sso_refresh`
+cookie mints a JWT for the first enabled user in the DB" — was
+closed in `feat/sso-admin-query-catalog`. There is no fall-back:
+every cookie the store does not authorize is a 401.
+
+| Step | What happens |
+|---|---|
+| `POST /login` | `JsonLoginFilter` calls `RefreshTokenStore.mint(username, userId, familyId)`. The raw UUID is set in the response body and the `Set-Cookie` header. Cookie attrs: `HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000` (30 days, mirrors the Redis TTL). |
+| `POST /api/auth/refresh` | `store.rotate(raw)`: `GET sso:refresh:hash:<sha256>` → if live, `MULTI`-GETDEL + wipe family + write tombstone + mint replacement in the SAME family. Cookie value changes every call. |
+| Replay of an already-rotated cookie | Tombstone at `sso:refresh:replay:<sha256>` + GETDEL'd hash → `ReuseDetected` → `revokeFamily(...)`. **The entire family (including any newer legitimate token) is wiped.** RFC 9700 §4.14.2 mandates this: a stolen refresh cookie must not be usable after a single successful refresh. The SPA's single-flight 401 handler logs the user out. |
+| `POST /api/auth/logout` | `store.revokeToken(raw)` deletes every live token in the family + clears the cookie (`Max-Age=0`). |
+| Multi-device | Each login is a new independent family. Rotating one device's cookie does not invalidate other devices. |
+| Store unavailable | `DataAccessException` (Redis timeout / unreachable) → controller returns `503 store_unavailable` on login or `401 store_unavailable` on refresh / logout. **`fail-open` is hard-coded off** (`sso.refresh-token.fail-open: false`). |
+
+Invariants:
+
+- **Server-side source of truth.** The cookie value is opaque to
+  the server; the actual `username` / `userId` / `familyId` is read
+  from Redis. The DB user lookup only happens to resolve
+  `username → UserDetails` for the JWT, not for cookie validation.
+- **SHA-256 at rest.** The Redis key is the SHA-256 hex of the
+  raw token; the raw value only exists on the wire (cookie +
+  JSON response body) and in the user's browser (RFC 9700
+  §4.9.3).
+- **Atomic rotation.** The rotate path uses Spring Data Redis
+  `SessionCallback` with MULTI/EXEC so the GETDEL + family-wipe +
+  tombstone-write is a single atomic operation. Concurrent refresh
+  attempts from two tabs racing the same cookie resolve to one
+  `Rotated` + one `ReuseDetected` → family wipe → both tabs 401 →
+  SPA logs out. RFC 9700-mandated behaviour.
+- **Cookie name ↔ key prefix coupling.**
+  `JsonLoginFilter.REFRESH_COOKIE_NAME = "sso_refresh"` and
+  `sso.refresh-token.key-prefix: sso:refresh` MUST change together.
+  Otherwise a cookie from a previous deployment could be replayed
+  against a different key namespace.
+
+Config: `auth-center/src/main/resources/application.yml` → block
+`sso.refresh-token.*` (`ttl-seconds`, `key-prefix`, `fail-open`).
+
+### Operational notes
+
+- **Redis persistence — disabled by design.** Compose runs Redis
+  with `--save "" --appendonly no`. Refresh tokens have a 30-day
+  TTL on every key; if Redis loses state, the worst case is
+  every active user re-logs in once. There is **no `redis-data`
+  volume mount**. Acceptable for an admin SPA.
+- **Redis memory footprint.** ~200 bytes per active session
+  (one hash key ~100 bytes JSON + key overhead + one family-set
+  member ~64 bytes). 10k users × 10 devices ≈ 100k sessions ×
+  200 bytes = 20 MB.
+- **Redis is a hard dependency at startup.** `auth-center`
+  `depends_on.redis` has `condition: service_healthy` in
+  `docker-compose.yml`. A Redis crash mid-flight degrades to
+  401s — there is no fail-open escape hatch.
+- **Single-node Redis is the target.** Lettuce is Sentinel-aware,
+  so the upgrade path is `spring.data.redis.sentinel.*` only — no
+  code change.
+- **Logging.** Successful rotation → INFO with family (last 8
+  chars). Reuse detection → WARN with `username` + `familyId` +
+  `hash_prefix` + remote IP. Store unavailable → ERROR with
+  Redis host:port + exception class.
+
+### Deploy cutover (hard-cutover by design)
+
+The bypass-era `MVP refresh-token flow` is removed; old cookies
+are NOT migrated. Rollout procedure:
+
+```bash
+# 1. Announce a 1-minute downtime window.
+# 2. Stop auth-center.
+docker compose stop auth-center
+# 3. Bring redis up first; verify healthy.
+docker compose up -d redis
+docker compose ps    # redis must show (healthy)
+# 4. Build + start auth-center with the new image.
+docker compose build auth-center
+docker compose up -d auth-center
+# 5. Verify.
+docker compose ps    # all services healthy
+bash admin-ui/scripts/smoke-auth-refresh.sh    # 8/8
+```
+
+**Expected user impact:** every user with a pre-deploy cookie gets
+a 401 on their next API call → SPA redirects to login → re-auth.
+This is by design (the legacy MVP cookie was a placeholder anyway —
+no legitimate user data was stored client-side).
+
+**Rollback path.** Rolling back to the MVP code requires flushing
+Redis first; otherwise the rolled-back code will treat every
+cookie as valid and mint tokens for the first enabled user,
+recreating the bypass. The safer choice is to go forward.
+
 ### Dynamic routes
 
 `api-gateway` auto-creates a route per service registered with Eureka, lowercased service-id as the path prefix. For example, `hello-service` (registered with Eureka as `HELLO-SERVICE`) gets the route `lb://HELLO-SERVICE` mounted at `/hello-service/**`. The `api-gateway` itself is excluded from the routes via the discovery locator's `include-expression` to prevent self-reference.
@@ -296,6 +393,9 @@ curl -sI http://localhost:8080/admin/assets/index-XXXXXXXX.js # 200 js
 | `DB_USER` | `sso` | auth-center, **sso-admin** | DB username |
 | `DB_PASSWORD` | `change-me-in-prod` | auth-center, **sso-admin** | DB password |
 | `EUREKA_URL` | `http://localhost:8761/eureka` | auth-center, api-gateway, hello-service, **sso-admin** | Service registry URL |
+| `REDIS_HOST` | `localhost` | auth-center | Redis host for the refresh-token store. Compose service name `redis` inside the stack; loopback on host runs. |
+| `REDIS_PORT` | `6379` | auth-center | Redis port |
+| `REDIS_PASSWORD` | (empty) | auth-center | Redis password. **MUST** be set in production via secret manager. Empty default is for dev only. |
 | `SSO_BOOTSTRAP_ENABLED` | `true` | auth-center | Set `false` in production to disable the default admin seeder |
 | `SSO_ADMIN_USERNAME` | `admin` | auth-center | Bootstrap admin username |
 | `SSO_ADMIN_PASSWORD` | `ChangeMe-Now-Please-123!` | auth-center | Bootstrap admin password. **Set in production.** |
