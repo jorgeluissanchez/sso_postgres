@@ -51,8 +51,8 @@ class EmailServiceTest {
                 "Example Inc.",
                 "SSO Modernizado",
                 "https://example.com/logo.png",
-                "http://localhost:8080/sso-admin/activateAccount",
-                "http://localhost:8080/sso-admin/activateAccount",
+                "http://localhost:8080/admin/activate",
+                "http://localhost:8080/admin/restore-password",
                 "activation-account.html",
                 "restore-password-account.html");
         service = new EmailService(mailSender, freemarker, props);
