@@ -31,4 +31,11 @@ public interface MicroserviceRepository extends JpaRepository<Microservice, Long
     Optional<Microservice> findByInstanceName(String instanceName);
 
     boolean existsByInstanceName(String instanceName);
+
+    /**
+     * Microservices whose {@code id_app} FK points at the
+     * given app — used by the {@code AppService} when
+     * listing a single app's services.
+     */
+    java.util.List<Microservice> findAllByApp_Id(Long appId);
 }

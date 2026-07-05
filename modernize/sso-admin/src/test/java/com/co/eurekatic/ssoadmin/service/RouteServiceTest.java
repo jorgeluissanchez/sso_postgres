@@ -28,6 +28,7 @@ class RouteServiceTest {
 
     @Mock RouteRepository routeRepo;
     @Mock RoleRepository roleRepo;
+    @Mock com.co.eurekatic.common.repository.AppRepository appRepo;
     @InjectMocks RouteService service;
 
     private static Route sample(long id) {
@@ -51,7 +52,7 @@ class RouteServiceTest {
     @Test
     void createRejectsDuplicateNameAndPath() {
         when(routeRepo.existsByNameAndPath("users", "/users")).thenReturn(true);
-        RouteRequest req = new RouteRequest(null, "users", null, "/users", 0, null, null);
+        RouteRequest req = new RouteRequest(null, "users", null, "/users", 0, null, null, null);
 
         assertThatThrownBy(() -> service.create(req))
                 .isInstanceOf(DuplicateException.class)
@@ -68,7 +69,7 @@ class RouteServiceTest {
         });
 
         RouteResponse resp = service.create(
-                new RouteRequest(null, "home", "icon", "/home", 0, "MENU", null));
+                new RouteRequest(null, "home", "icon", "/home", 0, "MENU", null, null));
 
         assertThat(resp.id()).isEqualTo(1L);
         assertThat(resp.name()).isEqualTo("home");
@@ -82,7 +83,7 @@ class RouteServiceTest {
         when(routeRepo.save(any(Route.class))).thenAnswer(inv -> inv.getArgument(0));
 
         RouteResponse resp = service.create(
-                new RouteRequest(null, "home", null, "/home", 0, null, 0L));
+                new RouteRequest(null, "home", null, "/home", 0, null, 0L, null));
 
         assertThat(resp.idParent()).isNull();
     }
@@ -90,7 +91,7 @@ class RouteServiceTest {
     @Test
     void updateRejectsMissingId() {
         assertThatThrownBy(() -> service.update(
-                new RouteRequest(null, "x", null, "/x", 0, null, null)))
+                new RouteRequest(null, "x", null, "/x", 0, null, null, null)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -102,7 +103,7 @@ class RouteServiceTest {
         when(routeRepo.findByNameAndPath("dup", "/dup")).thenReturn(Optional.of(other));
 
         assertThatThrownBy(() -> service.update(
-                new RouteRequest(1L, "dup", null, "/dup", 0, null, null)))
+                new RouteRequest(1L, "dup", null, "/dup", 0, null, null, null)))
                 .isInstanceOf(DuplicateException.class);
     }
 
@@ -114,7 +115,7 @@ class RouteServiceTest {
         when(routeRepo.save(mine)).thenReturn(mine);
 
         RouteResponse resp = service.update(
-                new RouteRequest(1L, "name-1", null, "/path-1", 0, null, null));
+                new RouteRequest(1L, "name-1", null, "/path-1", 0, null, null, null));
 
         assertThat(resp.id()).isEqualTo(1L);
     }

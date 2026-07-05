@@ -48,5 +48,13 @@ public record MicroserviceRequest(
         @Size(max = 120) String dbUsername,
         @Size(max = 500) String dbPassword,
         Integer poolSize,
-        @Size(max = 120) String instanceName
+        @Size(max = 120) String instanceName,
+        /**
+         * Optional "primary" {@code id_app} for this
+         * microservice. Nullable — same rationale as
+         * {@link RouteRequest#appId()}: rows created before
+         * the {@code 06-create-app-tables} migration land
+         * with {@code app_id=null}.
+         */
+        Long appId
 ) {}

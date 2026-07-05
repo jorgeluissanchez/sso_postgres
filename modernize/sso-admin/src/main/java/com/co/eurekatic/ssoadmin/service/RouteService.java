@@ -1,7 +1,9 @@
 package com.co.eurekatic.ssoadmin.service;
 
+import com.co.eurekatic.common.entity.App;
 import com.co.eurekatic.common.entity.Role;
 import com.co.eurekatic.common.entity.Route;
+import com.co.eurekatic.common.repository.AppRepository;
 import com.co.eurekatic.common.repository.RoleRepository;
 import com.co.eurekatic.common.repository.RouteRepository;
 import com.co.eurekatic.ssoadmin.dto.RouteRequest;
@@ -34,10 +36,14 @@ public class RouteService {
 
     private final RouteRepository routeRepo;
     private final RoleRepository roleRepo;
+    private final AppRepository appRepo;
 
-    public RouteService(RouteRepository routeRepo, RoleRepository roleRepo) {
+    public RouteService(RouteRepository routeRepo,
+                        RoleRepository roleRepo,
+                        AppRepository appRepo) {
         this.routeRepo = routeRepo;
         this.roleRepo = roleRepo;
+        this.appRepo = appRepo;
     }
 
     @Transactional
@@ -143,7 +149,7 @@ public class RouteService {
 
     /* ------------- internals ------------- */
 
-    private static void copy(RouteRequest req, Route r) {
+    private void copy(RouteRequest req, Route r) {
         r.setName(req.name());
         r.setIcon(req.icon());
         r.setPath(req.path());
@@ -152,6 +158,26 @@ public class RouteService {
         // Legacy "0" → null (root).
         Long parent = req.idParent();
         r.setIdParent(parent == null || ROOT_SENTINEL.equals(parent) ? null : parent);
+        // Optional primary-app FK. Null clears the binding
+        // (the route keeps existing as an orphan, surfaced
+        // only via fine-grained role_route). A non-null id
+        // MUST resolve to an existing app — we throw 400
+        // rather than letting JPA swallow it as a constraint
+        // violation with a confusing message.
+        r.setApp(resolveRouteApp(req.appId()));
+    }
+
+    /**
+     * Resolves the optional primary-app FK on the route.
+     * Returns {@code null} when the request passed {@code null}
+     * (clear binding / orphan route); throws 422 otherwise if
+     * the id doesn't exist.
+     */
+    private App resolveRouteApp(Long appId) {
+        if (appId == null) return null;
+        return appRepo.findById(appId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "appId " + appId + " no existe"));
     }
 
     public record RoleChecked(Long roleId, String name, boolean checked) {}

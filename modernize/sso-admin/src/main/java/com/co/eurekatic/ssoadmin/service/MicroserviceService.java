@@ -1,6 +1,8 @@
 package com.co.eurekatic.ssoadmin.service;
 
+import com.co.eurekatic.common.entity.App;
 import com.co.eurekatic.common.entity.Microservice;
+import com.co.eurekatic.common.repository.AppRepository;
 import com.co.eurekatic.common.repository.MicroserviceRepository;
 import com.co.eurekatic.ssoadmin.dto.MicroserviceRequest;
 import com.co.eurekatic.ssoadmin.dto.MicroserviceResponse;
@@ -62,13 +64,16 @@ public class MicroserviceService {
     private static final Logger log = LoggerFactory.getLogger(MicroserviceService.class);
 
     private final MicroserviceRepository repo;
+    private final AppRepository appRepo;
     private final ContainerProvisioner provisioner;
     private final EurekaReadinessProbe readinessProbe;
 
     public MicroserviceService(MicroserviceRepository repo,
+                               AppRepository appRepo,
                                ContainerProvisioner provisioner,
                                EurekaReadinessProbe readinessProbe) {
         this.repo = repo;
+        this.appRepo = appRepo;
         this.provisioner = provisioner;
         this.readinessProbe = readinessProbe;
     }
@@ -237,7 +242,7 @@ public class MicroserviceService {
 
     /* ------------- internals ------------- */
 
-    private static void copy(MicroserviceRequest req, Microservice m) {
+    private void copy(MicroserviceRequest req, Microservice m) {
         m.setServiceId(req.serviceId());
         m.setDescription(req.description());
         m.setRequestUri(req.requestUri());
@@ -253,6 +258,17 @@ public class MicroserviceService {
         m.setDbPassword(req.dbPassword());
         m.setPoolSize(req.poolSize());
         m.setInstanceName(req.instanceName());
+        // Optional primary-app FK. Same rationale as
+        // RouteService.resolveRouteApp: null clears, non-null
+        // must resolve to an existing app.
+        m.setApp(resolveMicroserviceApp(req.appId()));
+    }
+
+    private App resolveMicroserviceApp(Long appId) {
+        if (appId == null) return null;
+        return appRepo.findById(appId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "appId " + appId + " no existe"));
     }
 
     private static void requireQueryField(String value, String name) {

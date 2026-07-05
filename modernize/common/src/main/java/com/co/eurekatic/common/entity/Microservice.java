@@ -9,6 +9,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.JoinTable;
 import jakarta.persistence.ManyToMany;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -163,6 +164,18 @@ public class Microservice {
     @ManyToMany(mappedBy = "microservices", fetch = FetchType.LAZY)
     @Setter(AccessLevel.NONE)
     private Set<Endpoint> endpoints = new HashSet<>();
+
+    /**
+     * "Primary" {@link App} this microservice belongs to (FK
+     * {@code id_app}). Nullable so existing REST/QUERY rows
+     * aren't forced into an app; a {@code null} value just
+     * means "no primary app" (the microservice may still
+     * appear in apps via the {@code app_microservice} M:N
+     * join).
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "id_app")
+    private App app;
 
     /* ====================== equality ====================== */
 

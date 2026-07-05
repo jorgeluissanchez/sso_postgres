@@ -1,5 +1,6 @@
 package com.co.eurekatic.ssoadmin.dto;
 
+import com.co.eurekatic.common.entity.App;
 import com.co.eurekatic.common.entity.Microservice;
 
 import java.time.LocalDateTime;
@@ -40,9 +41,12 @@ public record MicroserviceResponse(
          *  re-provision the container. */
         String dbPassword,
         Integer poolSize,
-        String instanceName
+        String instanceName,
+        Long appId,
+        String appName
 ) {
     public static MicroserviceResponse fromEntity(Microservice m) {
+        App app = m.getApp();
         return new MicroserviceResponse(
                 m.getId(),
                 m.getServiceId(),
@@ -59,6 +63,8 @@ public record MicroserviceResponse(
                 /* dbPassword intentionally NOT echoed back to clients. */
                 null,
                 m.getPoolSize(),
-                m.getInstanceName());
+                m.getInstanceName(),
+                app != null ? app.getId() : null,
+                app != null ? app.getName() : null);
     }
 }

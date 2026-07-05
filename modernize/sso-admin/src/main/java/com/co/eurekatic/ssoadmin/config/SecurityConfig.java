@@ -90,7 +90,7 @@ public class SecurityConfig {
                         // is also per-row authorized (ADMIN
                         // bypass + publicEnd bypass + role
                         // intersection), same as /getQuery.
-                        .requestMatchers("/getQuery", "/getWrite", "/myQueries").authenticated()
+                        .requestMatchers("/getQuery", "/getWrite", "/myQueries", "/myMenu").authenticated()
                         // Everything else requires ADMIN.
                         .anyRequest().hasRole("ADMIN"))
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
