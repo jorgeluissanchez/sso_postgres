@@ -58,7 +58,17 @@ spring:
                 # upstream of the route forwarder. Removing the entry
                 # here would 404 legitimate ADMIN traffic, so this
                 # route is auth-gated, NOT route-removed.
-                - Path=/login,/getToken,/getApiToken,/getInfoUser,/getUsersSSO,/googleLogin
+                #
+                # /getToken was removed from this predicate in this
+                # branch (commits 17-19): the controller method is
+                # gone, the SecurityConfig permit-all entries on
+                # both layers are gone. An anonymous /getToken
+                # request hits anyExchange().authenticated() at the
+                # gateway and gets 401 before any forwarding; an
+                # authenticated /getToken has no controller left
+                # and would have been a 404 anyway, so there is
+                # nothing to forward.
+                - Path=/login,/getApiToken,/getInfoUser,/getUsersSSO,/googleLogin
               filters:
                 - AddResponseHeader=X-Source, api-gateway
             # /api/** surface for the admin-ui SPA (VITE_API_BASE=/api).
