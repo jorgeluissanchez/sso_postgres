@@ -79,12 +79,14 @@ public class UserController {
     /**
      * Public restore endpoint (paired with the email sent by
      * {@link #forgotPassword}). Mirrors {@link #activateAccount}
-     * but for the restore flow.
+     * but for the restore flow. Same POST + body shape as
+     * {@link #activateAccount} — uses the shared
+     * {@link TokenPasswordRequest} DTO. Password never travels
+     * in the URL.
      */
-    @GetMapping("/restorePassword")
-    public ResponseEntity<Void> restorePassword(@RequestParam String token,
-                                                @RequestParam String password) {
-        service.restorePassword(token, password);
+    @PostMapping("/restorePassword")
+    public ResponseEntity<Void> restorePassword(@Valid @RequestBody TokenPasswordRequest req) {
+        service.restorePassword(req.token(), req.password());
         return ResponseEntity.ok().build();
     }
 
