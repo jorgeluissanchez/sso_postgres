@@ -29,10 +29,21 @@ import java.util.List;
  * <p>Public endpoints (no auth required):
  * <ul>
  *   <li>{@code POST /login}</li>
- *   <li>{@code GET /getToken}, {@code GET /getApiToken}, {@code GET /getInfoUser}, {@code GET /getUsersSSO}</li>
+ *   <li>{@code GET /getToken}, {@code GET /getApiToken}, {@code GET /getInfoUser}</li>
  *   <li>{@code POST /googleLogin} (stub returning 501)</li>
  *   <li>{@code /actuator/health} and {@code /actuator/info}</li>
  *   <li>{@code OPTIONS /**} (CORS preflight)</li>
+ * </ul>
+ *
+ * <p>Endpoints that require authentication with a specific role:
+ * <ul>
+ *   <li>{@code GET /getUsersSSO} — requires {@code ADMIN} (closes the
+ *       anonymous user-enumeration bug fixed in this branch).
+ *       Uses {@code hasAuthority} not {@code hasRole} because
+ *       {@link com.co.eurekatic.auth.security.JwtAuthenticationFilter}
+ *       stores role names WITHOUT the {@code ROLE_} prefix (the JWT
+ *       carries the bare role name). {@code hasRole} would auto-prefix
+ *       and therefore mismatch.</li>
  * </ul>
  *
  * <p>Everything else requires a valid Bearer token. CORS is permissive
@@ -78,7 +89,13 @@ public class SecurityConfig {
                         .requestMatchers("/auth/refresh", "/auth/logout").permitAll()
                         .requestMatchers("/login").permitAll()
                         .requestMatchers("/getToken", "/getApiToken",
-                                "/getInfoUser", "/getUsersSSO", "/googleLogin").permitAll()
+                                "/getInfoUser", "/googleLogin").permitAll()
+                        // /getUsersSSO discloses usernames + emails + full
+                        // names of every active user. Anonymous callers must
+                        // NOT see it. JWT roles land on the SecurityContext
+                        // with the bare role name (no ROLE_ prefix), so
+                        // hasAuthority("ADMIN") is the correct check.
+                        .requestMatchers("/getUsersSSO").hasAuthority("ADMIN")
                         .requestMatchers("/actuator/health", "/actuator/health/**",
                                 "/actuator/info").permitAll()
                         .anyRequest().authenticated())
