@@ -12,6 +12,7 @@ const items = [
   { to: "/admin/endpoints", label: "Endpoints" },
   { to: "/admin/routes", label: "Rutas" },
   { to: "/admin/apps", label: "Apps" },
+  { to: "/admin/writes", label: "Writes" },
 ];
 
 export function Sidebar() {

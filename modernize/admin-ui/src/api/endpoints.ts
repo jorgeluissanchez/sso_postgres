@@ -43,6 +43,9 @@ import type {
   UpdateAccountRequest,
   UserResponse,
   UserRoleChecked,
+  WriteDefinitionRequest,
+  WriteDefinitionResponse,
+  WriteRoleChecked,
 } from "./types";
 
 // ====================== auth ======================
@@ -303,4 +306,44 @@ export const appsApi = {
     apiClient.delete<void>(
       `/sso-admin/app/${id}/microservice/${microserviceId}`,
     ),
+};
+
+/**
+ * Admin CRUD + role-binding for the WriteDefinition entity.
+ *
+ * <p>{@code columns} / {@code keyColumns} travel as
+ * JSON-as-string (see {@code WriteDefinitionRequest}). The
+ * form wraps both in the {@code <ChipInput>} primitive so the
+ * wire shape is the only place the JSON-as-string detail
+ * surfaces.
+ *
+ * <p>Same shape as {@link appsApi}: 5 CRUD + 3 role-binding.
+ * 1 binding family because writes only bind to roles (no
+ * users/routes/microservices in v1).
+ */
+export const writesApi = {
+  /* ============== CRUD ============== */
+  list: () => apiClient.get<WriteDefinitionResponse[]>("/sso-admin/write/getWrites"),
+  getById: (id: number) =>
+    apiClient.get<WriteDefinitionResponse>(`/sso-admin/write/${id}`),
+  /** Legacy read-side lookup by UUID. Kept for callers that
+   *  have only the handle (e.g. cross-service integration). */
+  getByUuid: (uuid: string) =>
+    apiClient.get<WriteDefinitionResponse>(
+      `/sso-admin/write/byUuid?uuid=${encodeURIComponent(uuid)}`,
+    ),
+  create: (body: WriteDefinitionRequest) =>
+    apiClient.post<WriteDefinitionResponse>("/sso-admin/write/save", body),
+  update: (body: WriteDefinitionRequest) =>
+    apiClient.put<WriteDefinitionResponse>("/sso-admin/write/update", body),
+  delete: (id: number) =>
+    apiClient.delete<void>(`/sso-admin/write/${id}`),
+
+  /* ============== role family ============== */
+  getRolesChecked: (id: number) =>
+    apiClient.get<WriteRoleChecked[]>(`/sso-admin/write/${id}/roles/checked`),
+  bindRole: (id: number, roleId: number) =>
+    apiClient.post<void>(`/sso-admin/write/${id}/role/${roleId}`),
+  unbindRole: (id: number, roleId: number) =>
+    apiClient.delete<void>(`/sso-admin/write/${id}/role/${roleId}`),
 };

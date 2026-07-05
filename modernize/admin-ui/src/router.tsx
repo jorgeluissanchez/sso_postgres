@@ -14,6 +14,7 @@ import { RoutesListPage } from "@/pages/routes/RoutesListPage";
 import { RolesListPage } from "@/pages/roles/RolesListPage";
 import { UsersListPage } from "@/pages/users/UsersListPage";
 import { AppsListPage } from "@/pages/apps/AppsListPage";
+import { WritesListPage } from "@/pages/writes/WritesListPage";
 
 /**
  * Router. Public routes: /login, /activate. Everything under /admin
@@ -46,6 +47,7 @@ export const router = createBrowserRouter([
           { path: "endpoints", element: <EndpointsListPage /> },
           { path: "routes", element: <RoutesListPage /> },
           { path: "apps", element: <AppsListPage /> },
+          { path: "writes", element: <WritesListPage /> },
         ],
       },
     ],

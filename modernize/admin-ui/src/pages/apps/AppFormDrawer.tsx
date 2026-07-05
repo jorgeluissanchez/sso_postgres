@@ -1,9 +1,9 @@
-import { useMemo, type ReactNode } from "react";
-import { Button } from "@/components/ui/Button";
+import { useMemo } from "react";
 import { Drawer } from "@/components/ui/Drawer";
 import { Input } from "@/components/ui/Input";
 import { Form, zodFieldErrors } from "@/components/forms/Form";
 import { Tabs, type TabItem } from "@/components/ui/Tabs";
+import { BindingTab } from "@/components/ui/BindingTab";
 import { appFormSchema, type AppFormValues } from "@/schemas";
 import type { AppResponse } from "@/api/types";
 import {
@@ -167,72 +167,13 @@ function DisabledTabHint() {
 /* ====================== Binding tabs ====================== */
 
 /**
- * The four binding tabs share the same shape: a list of rows
- * with a {@code checked: boolean} flag, each with a Vincular /
- * Desvincular button. We parameterize the differences — the
- * checked-hook, the bind/unbind hooks, the testid prefix, how
- * to extract the row's id (which lives under different field
- * names per family: {@code roleId}, {@code userId},
- * {@code routeId}, {@code microserviceId}), and how to render
- * the row's identifying label — so the actual tab components
- * stay tiny.
+ * The four binding tabs share the same checked-list shape —
+ * the renderer is now the shared {@link BindingTab} primitive
+ * (see {@code components/ui/BindingTab}). Each tab here is a
+ * thin adapter: pick the right checked-hook + bind/unbind
+ * pair, pass {@code entityId={app.id}} and
+ * {@code listTestIdPrefix="app-bindings"}, and the cell renderer.
  */
-interface BindingTabProps<TRow> {
-  appId: number;
-  data: TRow[] | undefined;
-  isLoading: boolean;
-  isPending: boolean;
-  emptyText: string;
-  toggleIdPrefix: string;
-  getRowId: (row: TRow) => number;
-  getRowChecked: (row: TRow) => boolean;
-  onToggle: (rowId: number, currentlyBound: boolean) => void;
-  renderRow: (row: TRow) => ReactNode;
-}
-
-function BindingTab<TRow>({
-  appId,
-  data,
-  isLoading,
-  isPending,
-  emptyText,
-  toggleIdPrefix,
-  getRowId,
-  getRowChecked,
-  onToggle,
-  renderRow,
-}: BindingTabProps<TRow>) {
-  return (
-    <ul className="divide-y divide-slate-200" data-testid={`app-bindings-${appId}`}>
-      {(data ?? []).map((row) => {
-        const rowId = getRowId(row);
-        const checked = getRowChecked(row);
-        return (
-          <li
-            key={rowId}
-            className="flex items-center justify-between py-2 text-sm"
-          >
-            <span className="font-medium text-slate-800">{renderRow(row)}</span>
-            <Button
-              size="sm"
-              variant={checked ? "secondary" : "primary"}
-              disabled={isPending}
-              loading={isPending}
-              onClick={() => onToggle(rowId, checked)}
-              data-testid={`${toggleIdPrefix}-${rowId}`}
-            >
-              {checked ? "Desvincular" : "Vincular"}
-            </Button>
-          </li>
-        );
-      })}
-      {!isLoading && data && data.length === 0 ? (
-        <li className="py-2 text-sm text-slate-500">{emptyText}</li>
-      ) : null}
-    </ul>
-  );
-}
-
 function RolesTab({ appId }: { appId: number }) {
   const roles = useAppRolesChecked(appId);
   const bind = useBindAppRole();
@@ -240,7 +181,8 @@ function RolesTab({ appId }: { appId: number }) {
   const pending = bind.isPending || unbind.isPending;
   return (
     <BindingTab
-      appId={appId}
+      entityId={appId}
+      listTestIdPrefix="app-bindings"
       data={roles.data}
       isLoading={roles.isLoading}
       isPending={pending}
@@ -267,7 +209,8 @@ function UsersTab({ appId }: { appId: number }) {
   const pending = bind.isPending || unbind.isPending;
   return (
     <BindingTab
-      appId={appId}
+      entityId={appId}
+      listTestIdPrefix="app-bindings"
       data={users.data}
       isLoading={users.isLoading}
       isPending={pending}
@@ -294,7 +237,8 @@ function RoutesTab({ appId }: { appId: number }) {
   const pending = bind.isPending || unbind.isPending;
   return (
     <BindingTab
-      appId={appId}
+      entityId={appId}
+      listTestIdPrefix="app-bindings"
       data={routes.data}
       isLoading={routes.isLoading}
       isPending={pending}
@@ -326,7 +270,8 @@ function MicroservicesTab({ appId }: { appId: number }) {
   const pending = bind.isPending || unbind.isPending;
   return (
     <BindingTab
-      appId={appId}
+      entityId={appId}
+      listTestIdPrefix="app-bindings"
       data={services.data}
       isLoading={services.isLoading}
       isPending={pending}

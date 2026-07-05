@@ -187,6 +187,66 @@ export type EndpointFormValues = z.infer<typeof endpointFormSchema>;
 export type RouteFormValues = z.infer<typeof routeFormSchema>;
 export type AppFormValues = z.infer<typeof appFormSchema>;
 export type QueryFormValues = z.infer<typeof queryFormSchema>;
+export type WriteFormValues = z.infer<typeof writeFormSchema>;
+
+/**
+ * Schema for the Writes Catalog admin form.
+ *
+ * <p>The wire shape is JSON-as-string for {@code columns} and
+ * {@code keyColumns} (the backend stores them in a TEXT
+ * column). The form, however, holds them as {@code string[]}
+ * — the natural shape for the {@code <ChipInput>} primitive.
+ * The drawer's submit handler bridges the two
+ * ({@code JSON.stringify} → wire,
+ * {@code JSON.parse} ← response).
+ *
+ * <p>Field-by-field:
+ * <ul>
+ *   <li>{@code uuid} — required, max 64, same regex as queries:
+ *       {@code [a-zA-Z0-9_-]+}. The uuid is the handle
+ *       query-service consumes via
+ *       {@code GET /write/byUuid?uuid=...}.</li>
+ *   <li>{@code writeType} — enum INSERT|UPDATE. Select, not
+ *       radio: only two options, the native select is
+ *       less ceremony.</li>
+ *   <li>{@code tableName} — required, max 200, must be
+ *       qualified ({@code schema.table}). The regex refuses
+ *       {@code users} / {@code public} alone — exactly the
+ *       case Bean Validation catches on the backend.</li>
+ *   <li>{@code columns} — chip array, min 1 (matches the
+ *       backend's {@code @NotBlank}).</li>
+ *   <li>{@code keyColumns} — chip array, optional, empty by
+ *       default. Only meaningful for {@code writeType=UPDATE}
+ *       but the schema doesn't enforce that; the user can
+ *       freely leave it empty for INSERT.</li>
+ * </ul>
+ *
+ * <p>{@code keyColumns} defaults to {@code []} so the form
+ * shape stays stable when editing an INSERT row that has
+ * no key columns in the DB.
+ */
+export const writeFormSchema = z.object({
+  uuid: z
+    .string()
+    .min(1, "Requerido")
+    .max(64, "Máximo 64 caracteres")
+    .regex(/^[a-zA-Z0-9_-]+$/, "Solo letras, números, guion y guion bajo"),
+  writeType: z.enum(["INSERT", "UPDATE"], {
+    errorMap: () => ({ message: "Tipo inválido" }),
+  }),
+  tableName: z
+    .string()
+    .min(1, "Requerido")
+    .max(200, "Máximo 200 caracteres")
+    .regex(
+      /^[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*$/,
+      "Debe ser schema.table (ej: public.users)",
+    ),
+  columns: z
+    .array(z.string().min(1, "Vacío"))
+    .min(1, "Al menos una columna"),
+  keyColumns: z.array(z.string()).default([]),
+});
 
 /**
  * Loose schema for the parameter bag sent to query-service's

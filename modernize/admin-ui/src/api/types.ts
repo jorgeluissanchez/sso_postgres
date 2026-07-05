@@ -423,6 +423,63 @@ export interface AppMicroserviceChecked {
   checked: boolean;
 }
 
+// ====================== sso-admin / writes ======================
+
+/** INSERT vs UPDATE — the two flavours of write catalog row. */
+export type WriteType = "INSERT" | "UPDATE";
+
+/**
+ * CRUD payload for {@code /sso-admin/write/save|update}.
+ * Mirrors {@code WriteDefinitionRequest} on the backend.
+ *
+ * <p>{@code columns} and {@code keyColumns} are sent across the
+ * wire as JSON-as-string (the backend stores them in a
+ * single-column TEXT field). The admin form shapes them as
+ * {@code string[]} via the chip input and serializes with
+ * {@code JSON.stringify} on submit
+ * — see {@code WriteFormDrawer}.
+ *
+ * <p>{@code keyColumns} is optional (the entity column is
+ * nullable); the form sends {@code null} when the chip list
+ * is empty. {@code columns} is required.
+ */
+export interface WriteDefinitionRequest {
+  id?: number;
+  uuid: string;
+  writeType: WriteType;
+  tableName: string;
+  columns: string;
+  keyColumns: string | null;
+}
+
+/**
+ * Read shape for {@code GET /sso-admin/write/getWrites} and
+ * the per-id variant. Mirrors {@code WriteDefinitionResponse}
+ * on the backend. {@code columns} / {@code keyColumns} are
+ * JSON-as-string (parse with {@code JSON.parse} to get the
+ * {@code string[]} the chip input edits).
+ */
+export interface WriteDefinitionResponse {
+  id: number;
+  uuid: string;
+  writeType: WriteType;
+  tableName: string;
+  columns: string;
+  keyColumns: string | null;
+  createdDate: string;
+  roleIds: number[];
+}
+
+/** Per-write checked-listing of roles. Mirrors
+ *  {@code WriteDefinitionAdminService.RoleChecked}. The
+ *  suffixed {@code roleId} + {@code checked} fields follow
+ *  the module convention (App/Query/Routes/Endpoints). */
+export interface WriteRoleChecked {
+  roleId: number;
+  name: string;
+  checked: boolean;
+}
+
 /**
  * Body of {@code POST /query-service-<instance>/query}. The
  * service returns a list of objects keyed by JDBC column label
