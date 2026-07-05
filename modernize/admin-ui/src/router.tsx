@@ -8,6 +8,7 @@ import { MicroservicesListPage } from "@/pages/microservices/MicroservicesListPa
 import { QueryServicesListPage } from "@/pages/query-services/QueryServicesListPage";
 import { QueriesCatalogPage } from "@/pages/queries/QueriesCatalogPage";
 import { QueriesAdminPage } from "@/pages/queries/QueriesAdminPage";
+import { QueriesDynamicPage } from "@/pages/queries/QueriesDynamicPage";
 import { EndpointsListPage } from "@/pages/endpoints/EndpointsListPage";
 import { RoutesListPage } from "@/pages/routes/RoutesListPage";
 import { RolesListPage } from "@/pages/roles/RolesListPage";
@@ -40,6 +41,7 @@ export const router = createBrowserRouter([
           { path: "query-services", element: <QueryServicesListPage /> },
           { path: "queries", element: <QueriesCatalogPage /> },
           { path: "query-catalog", element: <QueriesAdminPage /> },
+          { path: "dynamic-crud", element: <QueriesDynamicPage /> },
           { path: "endpoints", element: <EndpointsListPage /> },
           { path: "routes", element: <RoutesListPage /> },
         ],

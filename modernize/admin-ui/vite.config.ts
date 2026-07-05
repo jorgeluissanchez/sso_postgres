@@ -34,6 +34,18 @@ export default defineConfig({
         changeOrigin: false,
         secure: false,
       },
+      // The Queries Catalog calls query-service containers
+      // directly (NOT under /api): the gateway's discovery
+      // locator auto-creates /query-service-<instance>/** routes
+      // from Eureka service ids lowercased. Forward those too,
+      // otherwise the SPA's fetch hits Vite itself and 404s
+      // (it forwards the path verbatim, no StripPrefix — the
+      // gateway's locator expects /query-service-<x>/...).
+      "/query-service": {
+        target: "http://localhost:8080",
+        changeOrigin: false,
+        secure: false,
+      },
     },
   },
   preview: {
@@ -46,6 +58,14 @@ export default defineConfig({
     port: 4173,
     proxy: {
       "/api": {
+        target: "http://localhost:8080",
+        changeOrigin: false,
+        secure: false,
+      },
+      // Same gateway auto-locator routes as in `server` above.
+      // Without this, /query-service-postfix-.../query from the
+      // SPA hits :4173 and the dev server 404s the static asset.
+      "/query-service": {
         target: "http://localhost:8080",
         changeOrigin: false,
         secure: false,

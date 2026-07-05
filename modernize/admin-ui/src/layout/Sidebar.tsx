@@ -8,6 +8,7 @@ const items = [
   { to: "/admin/query-services", label: "Query Services" },
   { to: "/admin/queries", label: "Queries Catalog" },
   { to: "/admin/query-catalog", label: "Queries (admin)" },
+  { to: "/admin/dynamic-crud", label: "Dynamic CRUD" },
   { to: "/admin/endpoints", label: "Endpoints" },
   { to: "/admin/routes", label: "Rutas" },
 ];
