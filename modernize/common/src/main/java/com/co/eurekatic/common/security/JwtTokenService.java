@@ -12,7 +12,6 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -133,29 +132,5 @@ public class JwtTokenService {
         }
 
         return new AuthPrincipal(claims.getSubject(), roles, tokenType);
-    }
-
-    /* ====================== introspection ====================== */
-
-    /**
-     * Decode a token WITHOUT verifying its signature. Useful for logging
-     * or for endpoints that need to inspect claims before fully trusting
-     * them (e.g. refresh-token endpoint that wants to read the
-     * {@code sub} even if the token is near expiry).
-     *
-     * <p><strong>Never</strong> use the returned claims for authorization
-     * decisions — they may be forged. Always re-parse with {@link #parse}
-     * before granting access.
-     */
-    public Map<String, Object> decodeUnsafe(String token) {
-        if (token == null) {
-            return Map.of();
-        }
-        Claims claims = Jwts.parser()
-                .verifyWith(key)
-                .build()
-                .parseSignedClaims(token)
-                .getPayload();
-        return claims;
     }
 }
