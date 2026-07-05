@@ -45,10 +45,24 @@ import java.util.List;
  *       the correct hint that the caller should send credentials.</li>
  * </ul>
  *
- * <p>{@code /activateAccount} is technically public on the
- * legacy (so a user clicking the email link works without
- * being logged in). We mirror that by listing it explicitly
- * under {@code permitAll()}. Same for {@code /forgotPassword}.
+ * <p>{@code /activateAccount}, {@code /restorePassword}, and
+ * {@code /forgotPassword} are public on the legacy sso-service
+ * (a user clicks the email link and lands here without being
+ * logged in). We mirror that by listing them explicitly under
+ * {@code permitAll()}.
+ *
+ * <p>Note on CSRF: Spring Security's CSRF protection is
+ * intentionally disabled at the chain level (see below). For
+ * the activation/restore flows, the single-use {@code token}
+ * delivered in the email is the per-account capability — an
+ * attacker must already possess the token (which means they
+ * already own the user's email inbox) to trigger the flow.
+ * The token also acts as a single-use anti-CSRF token: a
+ * cross-site {@code <img>} or form post would need the
+ * attacker's own token, which they don't have. We do NOT
+ * enable Spring's CSRF filter for these endpoints because the
+ * token's capability is sufficient and the legitimate caller
+ * arrives via the SPA-hosted form (same-origin).
  */
 @Configuration
 @EnableWebSecurity
@@ -73,9 +87,16 @@ public class SecurityConfig {
                 .authorizeHttpRequests(a -> a
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         // Public — user clicks the activation link
-                        // from their email and lands here without
-                        // being logged in.
-                        .requestMatchers("/activateAccount", "/forgotPassword").permitAll()
+                        // (or the restore-password link) from their
+                        // email and lands here without being logged
+                        // in. /restorePassword was missing from this
+                        // list, which left the restore flow broken
+                        // for end users (any anonymous caller hit
+                        // the hasRole("ADMIN") fallback and got 403).
+                        // Fixed in this branch — all three flows now
+                        // sit on equal footing under permitAll().
+                        .requestMatchers("/activateAccount", "/restorePassword",
+                                "/forgotPassword").permitAll()
                         // Health probes.
                         .requestMatchers("/actuator/health", "/actuator/health/**",
                                 "/actuator/info").permitAll()
