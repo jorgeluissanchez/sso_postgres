@@ -18,8 +18,10 @@
 #  8. PASS / FAIL
 #
 # Defaults assume the canonical dev setup:
-#   - instance  = query-service-postfix-1783192553  (compose service
-#                 name; QUERY_INSTANCE_NAME env matches)
+#   - instance  = postgres  (compose-managed `sso-query-service-postgres`;
+#                 the env var carries the SUFFIX only — the gateway
+#                 auto-prepends `query-service-`, so passing the full
+#                 service-id here would double the prefix and 404)
 #   - dialect   = postgres
 # Override either via the env before calling.
 #
@@ -31,7 +33,7 @@ set -euo pipefail
 GATEWAY="${GATEWAY:-http://localhost:8080}"
 ADMIN_USER="${SSO_ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${SSO_ADMIN_PASSWORD:-ChangeMe-Now-Please-123!}"
-INSTANCE="${QUERY_TABLES_TARGET:-query-service-postfix-1783192553}"
+INSTANCE="${QUERY_TABLES_TARGET:-postgres}"
 DIALECT="${QUERY_TABLES_DIALECT:-postgres}"
 
 PASS=0
