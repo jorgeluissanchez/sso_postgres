@@ -49,6 +49,16 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Backing store for the refresh-token flow (RedisRefreshTokenStore).
+             Spring Boot manages the Lettuce version; we do not pin it here.
+             The interface (RefreshTokenStore) lives in `common` so the
+             controller and JsonLoginFilter can depend on it without pulling
+             Spring Data Redis transitively into the shared module. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
         <!-- Test scope -->
         <dependency>
             <groupId>com.h2database</groupId>
