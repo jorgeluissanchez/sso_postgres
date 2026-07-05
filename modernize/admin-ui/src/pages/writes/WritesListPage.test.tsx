@@ -6,6 +6,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ToastProvider } from "@/components/ui/Toast";
 import { WritesListPage } from "./WritesListPage";
 import type {
+  MicroserviceResponse,
+  TableInfo,
   WriteDefinitionResponse,
   WriteRoleChecked,
 } from "@/api/types";
@@ -14,13 +16,15 @@ import type {
  * Tests for the Writes admin CRUD page. Same fetch-stub +
  * URL-dispatch pattern as {@code AppsListPage.test.tsx}.
  *
- * <p>Coverage scope (mirrors the Apps test set + chips):
+ * <p>Coverage scope (mirrors the Apps test set + chips +
+ * microservice picker):
  * <ul>
  *   <li>Renders rows from {@code GET /write/getWrites} with the
- *       columns + roles badge.</li>
+ *       columns + roles badge + microservice binding badge.</li>
  *   <li>"+ Nuevo write" opens the drawer; submitting POSTs to
- *       {@code /write/save} with JSON-as-string columns.
- *       Drawer closes.</li>
+ *       {@code /write/save} with JSON-as-string columns and
+ *       the explicit microserviceId=null ("global") on the
+ *       wire. Drawer closes.</li>
  *   <li>"Editar" opens the drawer with the row's chip data;
  *       submit PUTs to {@code /write/update}. Drawer stays
  *       open.</li>
@@ -32,6 +36,14 @@ import type {
  *   <li>"Eliminar" opens the confirm modal; on confirm,
  *       {@code DELETE /write/{id}} fires.</li>
  *   <li>Empty state shows the configured copy.</li>
+ *   <li>Microservicio column resolves the FK id → instance via
+ *       {@code /sso-admin/microservice/getMicroservices}.</li>
+ *   <li>Picking a {@code kind=QUERY} microservice lights up
+ *       the {@code TablePicker}; choosing a row autofills the
+ *       {@code tableName} input and ends up in the POST body.</li>
+ *   <li>Without picking a microservice, the {@code TablePicker}
+ *       panel does NOT render (the form stays a manual
+ *       {@code schema.table} editor).</li>
  * </ul>
  */
 
@@ -68,12 +80,43 @@ function mkWrite(over: Partial<WriteDefinitionResponse> = {}): WriteDefinitionRe
     keyColumns: null,
     createdDate: "2026-07-01T00:00:00Z",
     roleIds: [10],
+    microserviceId: null,
     ...over,
   };
 }
 
 function mkRoleChecked(r: Partial<WriteRoleChecked>): WriteRoleChecked {
   return { roleId: 1, name: "ADMIN", checked: false, ...r };
+}
+
+/**
+ * Minimal {@code MicroserviceResponse} factory. We only
+ * fill the fields the writes page actually consumes:
+ * {@code id}, {@code kind}, {@code instanceName},
+ * {@code dialect}. The rest are stubbed to keep the test
+ * fixture readable.
+ */
+function mkMicroservice(
+  over: Partial<MicroserviceResponse> = {},
+): MicroserviceResponse {
+  return {
+    id: 7,
+    serviceId: "smoke-ms",
+    description: "",
+    requestUri: "",
+    targetUriPath: "",
+    targetUrlHost: "",
+    targetUrlPort: "",
+    createdDate: "2026-07-01T00:00:00Z",
+    kind: "QUERY",
+    dialect: "postgres",
+    jdbcUrl: null,
+    dbUsername: null,
+    dbPassword: null,
+    poolSize: 10,
+    instanceName: "postgres",
+    ...over,
+  };
 }
 
 function jsonResponse(body: unknown, status = 200) {
@@ -101,11 +144,18 @@ function findFetchCall(fetchSpy: ReturnType<typeof vi.fn>, urlFragment: string) 
  *   <li>POST /sso-admin/write/{id}/role/{roleId} — bind role</li>
  *   <li>DELETE /sso-admin/write/{id}/role/{roleId} — unbind role</li>
  *   <li>GET /sso-admin/write/{id}/roles/checked — roles list</li>
+ *   <li>GET /sso-admin/microservice/getMicroservices — for the
+ *       microservice dropdown in the drawer + the
+ *       Microservicio column on the list page</li>
+ *   <li>GET /query-service-<instance>/tables?dialect=… — for
+ *       the inline TablePicker; filtered by instance+dialect</li>
  * </ul>
  */
 function buildFetchSpy(opts: {
   writes: WriteDefinitionResponse[];
   rolesForId?: Record<number, WriteRoleChecked[]>;
+  microservices?: MicroserviceResponse[];
+  tablesByInstance?: Record<string, TableInfo[]>;
 }) {
   const fetchSpy = vi.fn(
     (url: string | URL | Request, init?: RequestInit) => {
@@ -124,6 +174,7 @@ function buildFetchSpy(opts: {
             id: 999,
             createdDate: "2026-07-01T00:00:00Z",
             roleIds: [],
+            microserviceId: body.microserviceId ?? null,
             ...body,
           }),
         );
@@ -153,6 +204,33 @@ function buildFetchSpy(opts: {
         return Promise.resolve(jsonResponse(opts.rolesForId?.[id] ?? []));
       }
 
+      // microservices list — drives both the drawer <select>
+      // and the page-level microserviceId→{instanceName,dialect}
+      // lookup. Default = empty list so the dropdown shows just
+      // "Sin binding (global)".
+      if (
+        method === "GET" &&
+        u.includes("/sso-admin/microservice/getMicroservices")
+      ) {
+        return Promise.resolve(jsonResponse(opts.microservices ?? []));
+      }
+
+      // query-service /tables — call from the TablePicker once
+      // a kind=QUERY microservice is selected. Filter by both
+      // instanceName and dialect so a multi-dialect static
+      // deployment hits the right slice.
+      const tableMatch = u.match(
+        /\/query-service-([^/]+)\/tables\?dialect=([^&]+)/,
+      );
+      if (method === "GET" && tableMatch && tableMatch[1] && tableMatch[2]) {
+        const instance = tableMatch[1];
+        const dialect = decodeURIComponent(tableMatch[2]);
+        const key = `${instance}::${dialect}`;
+        return Promise.resolve(
+          jsonResponse(opts.tablesByInstance?.[key] ?? []),
+        );
+      }
+
       return Promise.reject(new Error(`Unexpected fetch: ${method} ${u}`));
     },
   );
@@ -170,10 +248,14 @@ describe("WritesListPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders rows from /getWrites with columns + roles badges", async () => {
-    const w1 = mkWrite({ id: 1, uuid: "smoke-write-1", roleIds: [10] });
-    const w2 = mkWrite({ id: 2, uuid: "smoke-write-2", roleIds: [] });
-    const spy = buildFetchSpy({ writes: [w1, w2] });
+  it("renders rows from /getWrites with columns + roles + microservice badges", async () => {
+    const ms = mkMicroservice({ id: 7, instanceName: "postgres", dialect: "postgres" });
+    const w1 = mkWrite({ id: 1, uuid: "smoke-write-1", roleIds: [10], microserviceId: 7 });
+    const w2 = mkWrite({ id: 2, uuid: "smoke-write-2", roleIds: [], microserviceId: null });
+    const spy = buildFetchSpy({
+      writes: [w1, w2],
+      microservices: [ms],
+    });
     vi.stubGlobal("fetch", spy);
 
     renderPage();
@@ -186,6 +268,12 @@ describe("WritesListPage", () => {
     expect(screen.getByText(/Roles · 0/)).toBeInTheDocument();
     // columns count (2) shows for both
     expect(screen.getAllByText(/^2/).length).toBeGreaterThanOrEqual(1);
+    // microservice lookup → row 1 shows resolved instance name
+    // (#7 · postgres), row 2 shows "Global" badge
+    const msCell = await screen.findByTestId("microservice-1");
+    expect(msCell).toHaveTextContent("#7");
+    expect(msCell).toHaveTextContent("postgres");
+    expect(screen.getByTestId("microservice-global-2")).toHaveTextContent("Global");
     // actions
     expect(screen.getByTestId("edit-1")).toBeInTheDocument();
     expect(screen.getByTestId("delete-1")).toBeInTheDocument();
@@ -220,6 +308,9 @@ describe("WritesListPage", () => {
     // columns JSON-as-string
     expect(body.columns).toBe('["ID"]');
     expect(body.keyColumns).toBeNull();
+    // No microservice was selected → microserviceId must be
+    // null on the wire so the backend's "global" path runs.
+    expect(body.microserviceId).toBeNull();
 
     // drawer closes on create
     await waitFor(() =>
@@ -377,5 +468,112 @@ describe("WritesListPage", () => {
     expect(
       await screen.findByText("Aún no hay writes."),
     ).toBeInTheDocument();
+  });
+
+  /* ====================== microservice picker ====================== */
+
+  it("Microservicio column resolves the FK id → instanceName + dialect from useMicroservices", async () => {
+    const ms = mkMicroservice({
+      id: 7,
+      instanceName: "postgres",
+      dialect: "postgres",
+    });
+    const w1 = mkWrite({ id: 1, microserviceId: 7 });
+    const spy = buildFetchSpy({
+      writes: [w1],
+      microservices: [ms],
+    });
+    vi.stubGlobal("fetch", spy);
+
+    renderPage();
+    const cell = await screen.findByTestId("microservice-1");
+    expect(cell).toHaveTextContent("#7");
+    // instanceName + dialect both appear inline
+    expect(cell).toHaveTextContent("postgres");
+  });
+
+  it("picking a QUERY microservice + a catalog table autofills tableName and the POST body carries microserviceId", async () => {
+    const ms = mkMicroservice({
+      id: 7,
+      instanceName: "postgres",
+      dialect: "postgres",
+    });
+    const tables: TableInfo[] = [
+      { dialect: "postgres", schema: "public", name: "users", remarks: null },
+      { dialect: "postgres", schema: "public", name: "orders", remarks: null },
+    ];
+    const spy = buildFetchSpy({
+      writes: [],
+      microservices: [ms],
+      tablesByInstance: { "postgres::postgres": tables },
+    });
+    vi.stubGlobal("fetch", spy);
+
+    renderPage();
+    await userEvent.click(await screen.findByTestId("new-write"));
+
+    // 1. Type UUID + default Tabla placeholder then we'll overwrite.
+    await userEvent.type(screen.getByLabelText(/UUID/i), "smoke-write-mt");
+    await userEvent.type(
+      screen.getByTestId("write-columns-input"),
+      "ID{Enter}",
+    );
+
+    // 2. Pick the QUERY microservice — this should enable the
+    //    inline TablePicker panel.
+    await userEvent.selectOptions(
+      screen.getByTestId("write-microservice"),
+      "7",
+    );
+
+    // 3. TablePicker select appears with the mock catalog rows.
+    const pickerSelect = await screen.findByTestId("write-table-picker-select");
+    await userEvent.selectOptions(pickerSelect, "public.users");
+
+    // 4. Tabla input should now be "public.users".
+    expect(screen.getByLabelText(/Tabla/i)).toHaveValue("public.users");
+
+    // 5. Submit and assert POST carries both fields.
+    await userEvent.click(screen.getByRole("button", { name: /^Crear$/i }));
+
+    await waitFor(() =>
+      expect(findFetchCall(spy, "/sso-admin/write/save")).toBeDefined(),
+    );
+    const call = findFetchCall(spy, "/sso-admin/write/save")!;
+    const body = JSON.parse((call[1] as RequestInit).body as string);
+    expect(body.uuid).toBe("smoke-write-mt");
+    expect(body.tableName).toBe("public.users");
+    expect(body.microserviceId).toBe(7);
+  });
+
+  it("without a microservice selected, the table picker panel does not render", async () => {
+    const ms = mkMicroservice({ id: 7, instanceName: "postgres", dialect: "postgres" });
+    const spy = buildFetchSpy({
+      writes: [],
+      microservices: [ms],
+    });
+    vi.stubGlobal("fetch", spy);
+
+    renderPage();
+    await userEvent.click(await screen.findByTestId("new-write"));
+
+    // The <select> for the microservice exists and has only
+    // the "Sin binding" option selected (default).
+    expect(screen.getByTestId("write-microservice")).toBeInTheDocument();
+    expect(screen.getByTestId("write-microservice")).toHaveValue("");
+
+    // The TablePicker block is gated on selectedMs !== null.
+    expect(
+      screen.queryByTestId("write-table-picker"),
+    ).not.toBeInTheDocument();
+    // The /tables endpoint is never called — we have no fetch
+    // for it in the spy, so a call would surface as
+    // "Unexpected fetch" via the rejection path. Spy has not
+    // been called for tables:
+    const tablesCalls = spy.mock.calls.filter(([url]) => {
+      const u = typeof url === "string" ? url : url.toString();
+      return /\/query-service-[^/]+\/tables/.test(u);
+    });
+    expect(tablesCalls.length).toBe(0);
   });
 });

@@ -442,6 +442,17 @@ export type WriteType = "INSERT" | "UPDATE";
  * <p>{@code keyColumns} is optional (the entity column is
  * nullable); the form sends {@code null} when the chip list
  * is empty. {@code columns} is required.
+ *
+ * <p>{@code microserviceId} binds the write to a
+ * {@code query-service-<instance>} container (must be
+ * {@code kind=QUERY}; the form's dropdown already filters).
+ * Sending {@code null} / omitting the field keeps the write
+ * "global" so any QUERY instance with the right datasource
+ * may serve it. Backed by the
+ * {@code WRITE_DEFINITION.MICROSERVICE_ID} FK added in
+ * migration {@code postgres/init/07-add-write-microservice-fk.sh}
+ * — service layer rejects non-null ids that don't resolve to
+ * kind=QUERY with 400 INVALID_REQUEST.
  */
 export interface WriteDefinitionRequest {
   id?: number;
@@ -450,6 +461,7 @@ export interface WriteDefinitionRequest {
   tableName: string;
   columns: string;
   keyColumns: string | null;
+  microserviceId?: number | null;
 }
 
 /**
@@ -458,6 +470,10 @@ export interface WriteDefinitionRequest {
  * on the backend. {@code columns} / {@code keyColumns} are
  * JSON-as-string (parse with {@code JSON.parse} to get the
  * {@code string[]} the chip input edits).
+ *
+ * <p>{@code microserviceId} is the FK surfaced for the list
+ * page so each row can show its backing instance without a
+ * follow-up round-trip. {@code null} = global.
  */
 export interface WriteDefinitionResponse {
   id: number;
@@ -468,6 +484,7 @@ export interface WriteDefinitionResponse {
   keyColumns: string | null;
   createdDate: string;
   roleIds: number[];
+  microserviceId: number | null;
 }
 
 /** Per-write checked-listing of roles. Mirrors
@@ -478,6 +495,31 @@ export interface WriteRoleChecked {
   roleId: number;
   name: string;
   checked: boolean;
+}
+
+// ====================== query-service / tables ======================
+
+/**
+ * Wire shape for {@code GET /query-service-<instance>/tables?dialect=…&schema=…}.
+ * Mirrors the backend {@code com.co.eurekatic.query.web.metadata.TableInfo}
+ * record. Returned rows are the base tables
+ * ({@code types={"TABLE"}}) of the requested datasource.
+ *
+ * <p>Used by the admin-ui Writes Catalog "pick a table"
+ * dropdown (see {@code WriteFormDrawer}). Callers join
+ * {@code schema + "." + name} to build the qualified
+ * {@code tableName} that goes into the
+ * {@code WRITE_DEFINITION.TABLE_NAME} column.
+ *
+ * <p>{@code remarks} is the {@code TABLE_REMARKS} JDBC column;
+ * surfaced by the controller for hover-tooltips even though
+ * the form ignores it. Will be null on most dialects.
+ */
+export interface TableInfo {
+  dialect: string;
+  schema: string | null;
+  name: string;
+  remarks: string | null;
 }
 
 /**

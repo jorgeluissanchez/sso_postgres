@@ -6,7 +6,13 @@ import { Form, zodFieldErrors } from "@/components/forms/Form";
 import { Tabs, type TabItem } from "@/components/ui/Tabs";
 import { BindingTab } from "@/components/ui/BindingTab";
 import { writeFormSchema, type WriteFormValues } from "@/schemas";
+import { useMicroservices } from "@/hooks/useMicroservices";
+import {
+  useMicroserviceTables,
+  type MicroserviceTableSource,
+} from "@/hooks/useMicroserviceTables";
 import type {
+  MicroserviceResponse,
   WriteDefinitionRequest,
   WriteDefinitionResponse,
 } from "@/api/types";
@@ -19,10 +25,12 @@ import {
 /**
  * Drawer for create + edit of a WriteDefinition. Hosts 2 tabs:
  * <ol>
- *   <li><b>General</b> — uuid + writeType + tableName +
- *       columns + keyColumns. The only tab that submits a
- *       CRUD payload. Uses {@code <Form>} + zod and the
- *       {@code <ChipInput>} primitive for the array fields.</li>
+ *   <li><b>General</b> — uuid + writeType + microservice +
+ *       tableName + columns + keyColumns. The only tab that
+ *       submits a CRUD payload. Uses {@code <Form>} + zod,
+ *       the {@code <ChipInput>} primitive for array fields,
+ *       and a {@code <TablePicker>} panel that lights up when
+ *       a {@code kind=QUERY} microservice is selected.</li>
  *   <li><b>Roles</b> — checked-listing with one Vincular /
  *       Desvincular toggle per role. Reuses
  *       {@link BindingTab} (the same primitive AppFormDrawer
@@ -55,6 +63,7 @@ export function WriteFormDrawer({ open, write, onClose, onSubmit }: Props) {
     () => ({
       uuid: write?.uuid ?? "",
       writeType: write?.writeType ?? "INSERT",
+      microserviceId: write?.microserviceId ?? null,
       tableName: write?.tableName ?? "",
       columns: parseColumns(write?.columns),
       keyColumns: parseColumns(write?.keyColumns),
@@ -115,6 +124,15 @@ function GeneralTab({
   onSubmit,
   onClose,
 }: GeneralTabProps) {
+  const services = useMicroservices();
+  const writeInstances = useMemo(
+    // Only QUERY rows can serve writes — REST has no SQL
+    // executor to even attempt the request. Mirrors the
+    // filter in QueryFormDrawer.
+    () => (services.data ?? []).filter((m) => m.kind === "QUERY"),
+    [services.data],
+  );
+
   return (
     <Form<WriteFormValues>
       initialValues={initialValues}
@@ -128,85 +146,244 @@ function GeneralTab({
         // (JSON-as-string). `keyColumns` drops to `null` when
         // empty so the backend's nullable column stays empty
         // instead of receiving the literal string `"[]"`.
+        // `microserviceId` is `number | null` already; the
+        // schema's transform coerces empty string back to
+        // `null` so the legacy "global" semantic lives.
+        const wireValues = {
+          columns: JSON.stringify(values.columns),
+          keyColumns:
+            values.keyColumns.length > 0
+              ? JSON.stringify(values.keyColumns)
+              : null,
+          microserviceId: values.microserviceId,
+        };
         const payload: WriteDefinitionRequest = write
-          ? { id: write.id, ...values, columns: JSON.stringify(values.columns), keyColumns: values.keyColumns.length > 0 ? JSON.stringify(values.keyColumns) : null }
-          : { ...values, columns: JSON.stringify(values.columns), keyColumns: values.keyColumns.length > 0 ? JSON.stringify(values.keyColumns) : null };
+          ? { id: write.id, uuid: values.uuid, writeType: values.writeType, ...wireValues, tableName: values.tableName }
+          : { uuid: values.uuid, writeType: values.writeType, ...wireValues, tableName: values.tableName };
         await onSubmit(payload);
       }}
       onCancel={onClose}
       submitLabel={write ? "Guardar cambios" : "Crear"}
     >
-      {({ values, setField, errors }) => (
-        <>
-          <Input
-            label="UUID"
-            required
-            value={values.uuid}
-            onChange={(e) => setField("uuid", e.target.value)}
-            error={errors.uuid}
-            hint="Handle público (sin espacios)"
-          />
-          <div className="h-3" />
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">
-              Tipo
-              <span aria-hidden="true" className="ml-0.5 text-red-600">
-                *
-              </span>
-            </label>
-            <select
-              value={values.writeType}
-              onChange={(e) =>
-                setField("writeType", e.target.value as "INSERT" | "UPDATE")
-              }
-              aria-invalid={errors.writeType ? true : undefined}
-              className={[
-                "w-full rounded border bg-white px-3 py-2 text-sm outline-none",
-                errors.writeType
-                  ? "border-red-400"
-                  : "border-slate-300 focus:border-sky-500",
-              ].join(" ")}
-              data-testid="write-type"
-            >
-              <option value="INSERT">INSERT</option>
-              <option value="UPDATE">UPDATE</option>
-            </select>
-            {errors.writeType ? (
-              <p role="alert" className="mt-1 text-xs text-red-600">
-                {errors.writeType}
-              </p>
+      {({ values, setField, errors }) => {
+        const selectedMs =
+          writeInstances.find((m) => m.id === values.microserviceId) ?? null;
+        return (
+          <>
+            <Input
+              label="UUID"
+              required
+              value={values.uuid}
+              onChange={(e) => setField("uuid", e.target.value)}
+              error={errors.uuid}
+              hint="Handle público (sin espacios)"
+            />
+            <div className="h-3" />
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Tipo
+                <span aria-hidden="true" className="ml-0.5 text-red-600">
+                  *
+                </span>
+              </label>
+              <select
+                value={values.writeType}
+                onChange={(e) =>
+                  setField("writeType", e.target.value as "INSERT" | "UPDATE")
+                }
+                aria-invalid={errors.writeType ? true : undefined}
+                className={[
+                  "w-full rounded border bg-white px-3 py-2 text-sm outline-none",
+                  errors.writeType
+                    ? "border-red-400"
+                    : "border-slate-300 focus:border-sky-500",
+                ].join(" ")}
+                data-testid="write-type"
+              >
+                <option value="INSERT">INSERT</option>
+                <option value="UPDATE">UPDATE</option>
+              </select>
+              {errors.writeType ? (
+                <p role="alert" className="mt-1 text-xs text-red-600">
+                  {errors.writeType}
+                </p>
+              ) : null}
+            </div>
+            <div className="h-3" />
+            <div>
+              <label
+                htmlFor="write-microservice"
+                className="mb-1 block text-sm font-medium text-slate-700"
+              >
+                Microservicio (kind=QUERY)
+              </label>
+              <select
+                id="write-microservice"
+                value={
+                  values.microserviceId == null
+                    ? ""
+                    : String(values.microserviceId)
+                }
+                onChange={(e) =>
+                  setField(
+                    "microserviceId",
+                    e.target.value === "" ? null : Number(e.target.value),
+                  )
+                }
+                aria-invalid={errors.microserviceId ? true : undefined}
+                className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                data-testid="write-microservice"
+              >
+                <option value="">Sin binding (global)</option>
+                {writeInstances.map((m) => (
+                  <option key={m.id} value={String(m.id)}>
+                    #{m.id} · {m.instanceName ?? m.serviceId}
+                    {m.dialect ? ` (${m.dialect})` : ""}
+                  </option>
+                ))}
+              </select>
+              {writeInstances.length === 0 && !services.isLoading ? (
+                <p className="mt-1 text-[11px] text-slate-500">
+                  No hay microservicios QUERY aprovisionados aún.
+                </p>
+              ) : null}
+            </div>
+            <div className="h-3" />
+            <Input
+              label="Tabla"
+              required
+              value={values.tableName}
+              onChange={(e) => setField("tableName", e.target.value)}
+              error={errors.tableName}
+              hint="schema.table (ej: public.users)"
+            />
+            {selectedMs ? (
+              <>
+                <div className="h-2" />
+                <TablePicker
+                  microservice={selectedMs}
+                  onPick={(qualified) => setField("tableName", qualified)}
+                />
+              </>
             ) : null}
-          </div>
-          <div className="h-3" />
-          <Input
-            label="Tabla"
-            required
-            value={values.tableName}
-            onChange={(e) => setField("tableName", e.target.value)}
-            error={errors.tableName}
-            hint="schema.table (ej: public.users)"
-          />
-          <div className="h-3" />
-          <ChipInput
-            label="Columnas"
-            required
-            value={values.columns}
-            onChange={(v) => setField("columns", v)}
-            error={errors.columns}
-            placeholder="Añadir columna + Enter"
-            dataTestId="write-columns"
-          />
-          <div className="h-3" />
-          <ChipInput
-            label="Columnas clave (opcional)"
-            value={values.keyColumns}
-            onChange={(v) => setField("keyColumns", v)}
-            hint="Solo para UPDATE"
-            dataTestId="write-key-columns"
-          />
-        </>
-      )}
+            <div className="h-3" />
+            <ChipInput
+              label="Columnas"
+              required
+              value={values.columns}
+              onChange={(v) => setField("columns", v)}
+              error={errors.columns}
+              placeholder="Añadir columna + Enter"
+              dataTestId="write-columns"
+            />
+            <div className="h-3" />
+            <ChipInput
+              label="Columnas clave (opcional)"
+              value={values.keyColumns}
+              onChange={(v) => setField("keyColumns", v)}
+              hint="Solo para UPDATE"
+              dataTestId="write-key-columns"
+            />
+          </>
+        );
+      }}
     </Form>
+  );
+}
+
+/**
+ * Inline helper for the General tab. Renders a small panel
+ * that lights up after the operator picks a {@code kind=QUERY}
+ * microservice and offers the live table catalog pulled from
+ * {@code GET /query-service-<instance>/tables?dialect=…}.
+ *
+ * <p>Choosing a row from the dropdown autofills the parent
+ * form's {@code tableName} input with the qualified
+ * {@code schema.name} string. The text input stays
+ * user-editable — the picker is a UX win, not a constraint
+ * (an admin can still override with {@code custom_table}
+ * values if needed).
+ */
+function TablePicker({
+  microservice,
+  onPick,
+}: {
+  microservice: MicroserviceResponse;
+  onPick: (qualified: string) => void;
+}) {
+  const source: MicroserviceTableSource | null = microservice.instanceName
+    ? {
+        instanceName: microservice.instanceName,
+        dialect: microservice.dialect ?? microservice.instanceName,
+      }
+    : microservice.dialect
+      ? { instanceName: microservice.dialect, dialect: microservice.dialect }
+      : null;
+
+  const tables = useMicroserviceTables(source);
+
+  if (!source) {
+    return (
+      <p className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
+        El microservicio seleccionado no tiene instanceName ni
+        dialect configurado — no se puede cargar el catálogo.
+      </p>
+    );
+  }
+
+  return (
+    <div
+      className="rounded border border-slate-200 bg-slate-50 p-3"
+      data-testid="write-table-picker"
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-slate-700">
+          Tablas en {source.instanceName}
+          {source.dialect ? (
+            <span className="ml-1 text-[10px] text-slate-500">
+              ({source.dialect})
+            </span>
+          ) : null}
+        </span>
+        {tables.isFetching ? (
+          <span className="text-[10px] text-slate-500">cargando…</span>
+        ) : null}
+      </div>
+      {tables.isError ? (
+        <p className="mt-1 text-xs text-red-600" data-testid="write-table-picker-error">
+          No se pudo cargar el catálogo de tablas.
+        </p>
+      ) : null}
+      {tables.data && tables.data.length > 0 ? (
+        <select
+          aria-label="Selector de catálogo del microservicio"
+          onChange={(e) => {
+            const t = tables.data!.find(
+              (x) => `${x.schema}.${x.name}` === e.target.value,
+            );
+            if (t) onPick(`${t.schema}.${t.name}`);
+          }}
+          defaultValue=""
+          className="mt-2 w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm"
+          data-testid="write-table-picker-select"
+        >
+          <option value="">— elegir —</option>
+          {tables.data.map((t) => (
+            <option
+              key={`${t.schema ?? ""}.${t.name}`}
+              value={`${t.schema ?? ""}.${t.name}`}
+            >
+              {t.schema ? `${t.schema}.` : ""}
+              {t.name}
+            </option>
+          ))}
+        </select>
+      ) : tables.isFetched ? (
+        <p className="mt-1 text-[11px] text-slate-500">
+          El datasource no expone tablas base con este dialect.
+        </p>
+      ) : null}
+    </div>
   );
 }
 

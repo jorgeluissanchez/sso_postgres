@@ -219,11 +219,20 @@ export type WriteFormValues = z.infer<typeof writeFormSchema>;
  *       default. Only meaningful for {@code writeType=UPDATE}
  *       but the schema doesn't enforce that; the user can
  *       freely leave it empty for INSERT.</li>
+ *   <li>{@code microserviceId} — null by default (write is
+ *       "global", any {@code query-service-<instance>} with
+ *       the right datasource may serve it). The form exposes
+ *       a {@code kind=QUERY} dropdown; selecting one enables
+ *       the {@code TablePicker} panel so the operator doesn't
+ *       have to type {@code schema.table} blind. Empty
+ *       string from the {@code <select>} coerces to
+ *       {@code null} (mirrors {@code queryFormSchema.microserviceId}).</li>
  * </ul>
  *
  * <p>{@code keyColumns} defaults to {@code []} so the form
  * shape stays stable when editing an INSERT row that has
- * no key columns in the DB.
+ * no key columns in the DB. {@code microserviceId} defaults
+ * to {@code null} for the same stability reason.
  */
 export const writeFormSchema = z.object({
   uuid: z
@@ -234,6 +243,20 @@ export const writeFormSchema = z.object({
   writeType: z.enum(["INSERT", "UPDATE"], {
     errorMap: () => ({ message: "Tipo inválido" }),
   }),
+  // Empty string from the <select> means "no binding";
+  // coerce to null so the backend's
+  // resolveWriteMicroservice(null) path runs (mirrors
+  // queryFormSchema.microserviceId on the Queries Catalog
+  // form — both feed into the same service-layer pattern).
+  microserviceId: z
+    .union([z.string(), z.number(), z.null()])
+    .transform((v) => {
+      if (v === "" || v == null) return null;
+      const n = typeof v === "string" ? Number(v) : v;
+      return Number.isFinite(n) && n > 0 ? n : null;
+    })
+    .nullable()
+    .default(null),
   tableName: z
     .string()
     .min(1, "Requerido")

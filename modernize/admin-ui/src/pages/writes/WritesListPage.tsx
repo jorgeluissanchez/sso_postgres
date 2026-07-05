@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Table, type Column } from "@/components/ui/Table";
@@ -9,6 +9,7 @@ import {
   useUpdateWrite,
   useWrites,
 } from "@/hooks/useWrites";
+import { useMicroservices } from "@/hooks/useMicroservices";
 import type {
   WriteDefinitionRequest,
   WriteDefinitionResponse,
@@ -20,8 +21,13 @@ import { WriteFormDrawer } from "./WriteFormDrawer";
  * binding family is managed inside the edit drawer via the
  * Roles tab — see {@code WriteFormDrawer}. This page owns:
  * <ul>
- *   <li>the row table (6 columns: uuid, writeType, tableName,
- *       columns count, roles count, actions),</li>
+ *   <li>the row table (7 columns: uuid, writeType,
+ *       microservice, tableName, columns count, roles count,
+ *       actions). The Microservicio column resolves
+ *       {@code microserviceId} via {@code useMicroservices}
+ *       so each row shows its backing instance without a
+ *       follow-up round-trip. {@code null} renders as
+ *       "Global".</li>
  *   <li>the create/edit drawer state,</li>
  *   <li>the delete confirmation modal.</li>
  * </ul>
@@ -46,6 +52,7 @@ import { WriteFormDrawer } from "./WriteFormDrawer";
  */
 export function WritesListPage() {
   const writes = useWrites();
+  const services = useMicroservices();
   const createWrite = useCreateWrite();
   const updateWrite = useUpdateWrite();
   const deleteWrite = useDeleteWrite();
@@ -56,6 +63,22 @@ export function WritesListPage() {
   const [deleting, setDeleting] = useState<WriteDefinitionResponse | null>(
     null,
   );
+
+  // Lookup table for the Microservicio column. Maps the FK
+  // id → {instanceName, dialect} once per fetch so the row
+  // renderer stays a pure function. Built inside a memo so
+  // the column referentially stays stable across renders
+  // (avoids the Table remounting its header on every poll).
+  const microserviceById = useMemo(() => {
+    const map = new Map<
+      number,
+      { instanceName: string | null; dialect: string | null }
+    >();
+    for (const m of services.data ?? []) {
+      map.set(m.id, { instanceName: m.instanceName, dialect: m.dialect });
+    }
+    return map;
+  }, [services.data]);
 
   async function handleSubmit(payload: WriteDefinitionRequest) {
     if (payload.id) {
@@ -104,6 +127,38 @@ export function WritesListPage() {
           {w.writeType}
         </span>
       ),
+    },
+    {
+      key: "microservice",
+      header: "Microservicio",
+      render: (w) => {
+        if (w.microserviceId == null) {
+          return (
+            <span
+              className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500"
+              data-testid={`microservice-global-${w.id}`}
+            >
+              Global
+            </span>
+          );
+        }
+        const ms = microserviceById.get(w.microserviceId);
+        const label = ms
+          ? `#${w.microserviceId} · ${ms.instanceName ?? ms.dialect ?? "?"}`
+          : `#${w.microserviceId}`;
+        return (
+          <span
+            className="inline-flex items-center gap-1 rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700"
+            data-testid={`microservice-${w.id}`}
+            title={ms?.dialect ?? undefined}
+          >
+            {label}
+            {ms?.dialect ? (
+              <span className="text-[9px] text-sky-500">({ms.dialect})</span>
+            ) : null}
+          </span>
+        );
+      },
     },
     {
       key: "tableName",
