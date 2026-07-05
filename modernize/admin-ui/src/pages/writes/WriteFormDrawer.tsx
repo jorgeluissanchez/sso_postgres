@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { ChipInput } from "@/components/ui/ChipInput";
 import { Drawer } from "@/components/ui/Drawer";
 import { Input } from "@/components/ui/Input";
@@ -11,7 +11,12 @@ import {
   useMicroserviceTables,
   type MicroserviceTableSource,
 } from "@/hooks/useMicroserviceTables";
+import {
+  useMicroserviceTableColumns,
+  type MicroserviceTableColumnsSource,
+} from "@/hooks/useMicroserviceTableColumns";
 import type {
+  ColumnInfo,
   MicroserviceResponse,
   WriteDefinitionRequest,
   WriteDefinitionResponse,
@@ -29,8 +34,12 @@ import {
  *       tableName + columns + keyColumns. The only tab that
  *       submits a CRUD payload. Uses {@code <Form>} + zod,
  *       the {@code <ChipInput>} primitive for array fields,
- *       and a {@code <TablePicker>} panel that lights up when
- *       a {@code kind=QUERY} microservice is selected.</li>
+ *       a {@code <TablePicker>} panel that lights up when
+ *       a {@code kind=QUERY} microservice is selected, and
+ *       two {@code <ColumnPicker>} panels that surface once
+ *       the admin types a {@code schema.table} in {@code Tabla}
+ *       — each is a checkbox list of the table's real columns
+ *       with a {@code (PK)} badge for primary-key rows.</li>
  *   <li><b>Roles</b> — checked-listing with one Vincular /
  *       Desvincular toggle per role. Reuses
  *       {@link BindingTab} (the same primitive AppFormDrawer
@@ -168,6 +177,37 @@ function GeneralTab({
       {({ values, setField, errors }) => {
         const selectedMs =
           writeInstances.find((m) => m.id === values.microserviceId) ?? null;
+        // Parse the qualified `schema.table` the admin typed (or
+        // the TablePicker autofilled). The column catalog
+        // endpoint requires both pieces — until the admin types
+        // a `.` between two non-empty names, the column picker
+        // stays hidden behind the chip input. LastIndexOf
+        // instead of split('.') so a table literally named
+        // `audit.foo.log` from a future schema where table
+        // names CAN contain dots still parses as
+        // schema=`audit.foo`, table=`log` — the JDBC driver
+        // accepts that and we don't have to babysit it.
+        const lastDot = values.tableName.lastIndexOf(".");
+        const isQualified =
+          lastDot > 0 && lastDot < values.tableName.length - 1;
+        const schemaPart = isQualified
+          ? values.tableName.slice(0, lastDot)
+          : "";
+        const tablePart = isQualified
+          ? values.tableName.slice(lastDot + 1)
+          : "";
+        const columnPickerSource: MicroserviceTableColumnsSource | null =
+          selectedMs &&
+          selectedMs.instanceName &&
+          isQualified
+            ? {
+                instanceName: selectedMs.instanceName,
+                dialect:
+                  selectedMs.dialect ?? selectedMs.instanceName,
+                schema: schemaPart,
+                table: tablePart,
+              }
+            : null;
         return (
           <>
             <Input
@@ -266,6 +306,15 @@ function GeneralTab({
                 />
               </>
             ) : null}
+            {columnPickerSource ? (
+              <ColumnPicker
+                source={columnPickerSource}
+                value={values.columns}
+                onChange={(next) => setField("columns", next)}
+                autoPickPk={false}
+                testId="write-columns-picker"
+              />
+            ) : null}
             <div className="h-3" />
             <ChipInput
               label="Columnas"
@@ -277,6 +326,15 @@ function GeneralTab({
               dataTestId="write-columns"
             />
             <div className="h-3" />
+            {columnPickerSource ? (
+              <ColumnPicker
+                source={columnPickerSource}
+                value={values.keyColumns}
+                onChange={(next) => setField("keyColumns", next)}
+                autoPickPk
+                testId="write-key-columns-picker"
+              />
+            ) : null}
             <ChipInput
               label="Columnas clave (opcional)"
               value={values.keyColumns}
@@ -381,6 +439,165 @@ function TablePicker({
       ) : tables.isFetched ? (
         <p className="mt-1 text-[11px] text-slate-500">
           El datasource no expone tablas base con este dialect.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Inline helper for the General tab. Lights up after the
+ * admin picks a {@code kind=QUERY} microservice AND types a
+ * {@code schema.table}-shaped value into {@code Tabla}.
+ * Renders a checkbox list driven by
+ * {@code GET /query-service-<instance>/columns?dialect=…&schema=…&table=…}.
+ *
+ * <p>Toggling a checkbox adds/removes the column from the
+ * form-side {@code string[]} the parent chip input is bound
+ * to — the chips and the checkboxes stay in sync because
+ * both views read the same {@code value} array. Manual chip
+ * entry still works for the rare case where the column is
+ * {@code computed} or the schema just got a new column that
+ * hasn't appeared in the picker yet (the chip stays even if
+ * no checkbox matches, exactly as the operator typed it).
+ *
+ * <p>{@code autoPickPk} seeds the array with the table's
+ * primary-key columns ONCE on first data arrival when:
+ * <ul>
+ *   <li>The caller passed {@code autoPickPk=true} (the
+ *       keyColumns picker in this drawer does; the columns
+ *       picker does not), and</li>
+ *   <li>The current {@code value} is empty (so we don't
+ *       clobber what the admin already entered), and</li>
+ *   <li>At least one row in the response has
+ *       {@code primaryKey=true}.</li>
+ * </ul>
+ * After that one auto-pick the {@code autoPickedRef} latch
+ * stays {@code true} so flipping the table doesn't re-fire
+ * — the admin's editing session owns the picker from then on.
+ */
+function ColumnPicker({
+  source,
+  value,
+  onChange,
+  autoPickPk = false,
+  testId,
+}: {
+  source: MicroserviceTableColumnsSource;
+  value: string[];
+  onChange: (next: string[]) => void;
+  autoPickPk?: boolean;
+  testId?: string;
+}) {
+  const columns = useMicroserviceTableColumns(source);
+  const data: ColumnInfo[] = columns.data ?? [];
+
+  const checkedSet = useMemo(() => new Set(value), [value]);
+  const pkNames = useMemo(
+    () => data.filter((c) => c.primaryKey).map((c) => c.name),
+    [data],
+  );
+
+  // Auto-pick PK columns ONCE. The ref latches the "did we
+  // already seed?" state across renders so a late-arriving
+  // refetch (admin flipped tables) doesn't re-seed and
+  // clobber whatever they've typed since.
+  const autoPickedRef = useRef(false);
+  useEffect(() => {
+    if (!autoPickPk) return;
+    if (autoPickedRef.current) return;
+    if (value.length !== 0) {
+      // Admin typed something into the chip list before the
+      // catalog arrived — respect their input.
+      autoPickedRef.current = true;
+      return;
+    }
+    if (pkNames.length === 0) return;
+    autoPickedRef.current = true;
+    onChange(pkNames);
+    // value.length is intentionally NOT in the dep array —
+    // we want to fire only when the catalog loads (or
+    // refetches with new PK names), not on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPickPk, pkNames, onChange]);
+
+  return (
+    <div
+      className="mt-3 rounded border border-slate-200 bg-slate-50 p-3"
+      data-testid={testId}
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-slate-700">
+          Columnas en {source.schema}.{source.table}
+          <span className="ml-1 text-[10px] text-slate-500">
+            ({source.dialect})
+          </span>
+        </span>
+        {columns.isFetching ? (
+          <span className="text-[10px] text-slate-500">cargando…</span>
+        ) : null}
+      </div>
+      {columns.isError ? (
+        <p
+          className="mt-1 text-xs text-red-600"
+          data-testid={testId ? `${testId}-error` : undefined}
+        >
+          No se pudo cargar el catálogo de columnas.
+        </p>
+      ) : null}
+      {data.length > 0 ? (
+        <ul className="mt-2 space-y-1">
+          {data.map((c) => {
+            const checked = checkedSet.has(c.name);
+            return (
+              <li
+                key={c.name}
+                className="flex items-center gap-2 text-xs text-slate-700"
+              >
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5"
+                  checked={checked}
+                  onChange={() => {
+                    const next = checked
+                      ? value.filter((v) => v !== c.name)
+                      : [...value, c.name];
+                    onChange(next);
+                  }}
+                  data-testid={
+                    testId ? `${testId}-checkbox-${c.name}` : undefined
+                  }
+                />
+                <span className="font-mono text-slate-900">{c.name}</span>
+                <span className="rounded bg-slate-200 px-1 text-[10px] text-slate-700">
+                  {c.dataType}
+                </span>
+                {c.nullable ? (
+                  <span className="rounded bg-amber-100 px-1 text-[10px] text-amber-800">
+                    NULL
+                  </span>
+                ) : (
+                  <span className="rounded bg-slate-300 px-1 text-[10px] text-slate-800">
+                    NOT NULL
+                  </span>
+                )}
+                {c.primaryKey ? (
+                  <span
+                    className="rounded bg-sky-100 px-1 text-[10px] font-semibold text-sky-800"
+                    data-testid={
+                      testId ? `${testId}-pk-${c.name}` : undefined
+                    }
+                  >
+                    PK
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : columns.isFetched ? (
+        <p className="mt-1 text-[11px] text-slate-500">
+          La tabla no expone columnas con este dialect.
         </p>
       ) : null}
     </div>

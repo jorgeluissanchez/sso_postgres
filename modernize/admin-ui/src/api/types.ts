@@ -522,6 +522,41 @@ export interface TableInfo {
   remarks: string | null;
 }
 
+// ====================== query-service / columns ======================
+
+/**
+ * Wire shape for {@code GET /query-service-<instance>/columns?dialect=…&schema=…&table=…}.
+ * Mirrors the backend {@code com.co.eurekatic.query.web.metadata.ColumnInfo}
+ * record. Returned rows are the base columns of one base table
+ * (the controller hardcodes {@code getColumns(…)} on the
+ * JDBC side — no SQL is executed, no arbitrary types accepted
+ * from the client) with the primaryKey flag joined in via a
+ * sibling {@code getPrimaryKeys} call.
+ *
+ * <p>Used by the admin-ui Writes Catalog "pick column(s)"
+ * multi-select for the {@code columns} / {@code keyColumns}
+ * chip inputs. The two per-row booleans drive the UI:
+ * {@code nullable} is rendered as a small chip
+ * ({@code "NULL"} / {@code "NOT NULL"}) next to the data type,
+ * and {@code primaryKey} tags the row with a {@code "(PK)"}
+ * badge plus pre-checks the keyColumns picker on
+ * {@code writeType=UPDATE}.
+ *
+ * <p>{@code schema} and {@code table} are echoed per row so the
+ * frontend can disambiguate when two tables from different
+ * schemas share a column name (e.g. {@code audit.created_at}
+ * vs {@code public.created_at}).
+ */
+export interface ColumnInfo {
+  dialect: string;
+  schema: string | null;
+  table: string;
+  name: string;
+  dataType: string;
+  nullable: boolean;
+  primaryKey: boolean;
+}
+
 /**
  * Body of {@code POST /query-service-<instance>/query}. The
  * service returns a list of objects keyed by JDBC column label

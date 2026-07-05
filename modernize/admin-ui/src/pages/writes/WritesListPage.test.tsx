@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ToastProvider } from "@/components/ui/Toast";
 import { WritesListPage } from "./WritesListPage";
 import type {
+  ColumnInfo,
   MicroserviceResponse,
   TableInfo,
   WriteDefinitionResponse,
@@ -149,6 +150,9 @@ function findFetchCall(fetchSpy: ReturnType<typeof vi.fn>, urlFragment: string) 
  *       Microservicio column on the list page</li>
  *   <li>GET /query-service-<instance>/tables?dialect=… — for
  *       the inline TablePicker; filtered by instance+dialect</li>
+ *   <li>GET /query-service-<instance>/columns?dialect=…&schema=…&table=… —
+ *       for the inline ColumnPicker; filtered by
+ *       instance+schema+table</li>
  * </ul>
  */
 function buildFetchSpy(opts: {
@@ -156,6 +160,7 @@ function buildFetchSpy(opts: {
   rolesForId?: Record<number, WriteRoleChecked[]>;
   microservices?: MicroserviceResponse[];
   tablesByInstance?: Record<string, TableInfo[]>;
+  columnsByTable?: Record<string, ColumnInfo[]>;
 }) {
   const fetchSpy = vi.fn(
     (url: string | URL | Request, init?: RequestInit) => {
@@ -229,6 +234,28 @@ function buildFetchSpy(opts: {
         return Promise.resolve(
           jsonResponse(opts.tablesByInstance?.[key] ?? []),
         );
+      }
+
+      // query-service /columns — call from the ColumnPicker
+      // once a kind=QUERY microservice is selected AND the
+      // admin typed a schema.table in Tabla. Filtered by
+      // (instance, schema, table) so multi-schema deployments
+      // (admin / audit / analytics) hit the right slice.
+      const columnMatch = u.match(
+        /\/query-service-([^/]+)\/columns\?.*schema=([^&]+).*table=([^&]+)/,
+      );
+      if (method === "GET" && columnMatch) {
+        const instance = columnMatch[1];
+        const schema =
+          columnMatch[2] != null ? decodeURIComponent(columnMatch[2]) : "";
+        const table =
+          columnMatch[3] != null ? decodeURIComponent(columnMatch[3]) : "";
+        if (instance && schema != null && table != null) {
+          const key = `${instance}::${schema}::${table}`;
+          return Promise.resolve(
+            jsonResponse(opts.columnsByTable?.[key] ?? []),
+          );
+        }
       }
 
       return Promise.reject(new Error(`Unexpected fetch: ${method} ${u}`));
@@ -575,5 +602,166 @@ describe("WritesListPage", () => {
       return /\/query-service-[^/]+\/tables/.test(u);
     });
     expect(tablesCalls.length).toBe(0);
+  });
+
+  it("picking a table lights up the column picker, checkboxes drive the chips, and PKs auto-tick keyColumns", async () => {
+    const ms = mkMicroservice({
+      id: 7,
+      instanceName: "postgres",
+      dialect: "postgres",
+    });
+    const tables: TableInfo[] = [
+      { dialect: "postgres", schema: "public", name: "users", remarks: null },
+    ];
+    const columns: ColumnInfo[] = [
+      // PK — should auto-tick keyColumns on create.
+      {
+        dialect: "postgres",
+        schema: "public",
+        table: "users",
+        name: "ID",
+        dataType: "bigint",
+        nullable: false,
+        primaryKey: true,
+      },
+      {
+        dialect: "postgres",
+        schema: "public",
+        table: "users",
+        name: "NAME",
+        dataType: "varchar",
+        nullable: true,
+        primaryKey: false,
+      },
+      {
+        dialect: "postgres",
+        schema: "public",
+        table: "users",
+        name: "EMAIL",
+        dataType: "varchar",
+        nullable: true,
+        primaryKey: false,
+      },
+    ];
+    const spy = buildFetchSpy({
+      writes: [],
+      microservices: [ms],
+      tablesByInstance: { "postgres::postgres": tables },
+      columnsByTable: { "postgres::public::users": columns },
+    });
+    vi.stubGlobal("fetch", spy);
+
+    renderPage();
+    await userEvent.click(await screen.findByTestId("new-write"));
+
+    // Type UUID + seed a manual chip so we can confirm manual
+    // input keeps working alongside the picker.
+    await userEvent.type(screen.getByLabelText(/UUID/i), "smoke-cols");
+    await userEvent.type(screen.getByTestId("write-columns-input"), "X{Enter}");
+
+    // Without a microservice + a qualified `schema.table`, the
+    // ColumnPicker is gated off (no fetch has happened).
+    expect(screen.queryByTestId("write-columns-picker")).not.toBeInTheDocument();
+
+    // Pick the microservice.
+    await userEvent.selectOptions(
+      screen.getByTestId("write-microservice"),
+      "7",
+    );
+
+    // Pick a table — autofills `public.users`.
+    const pickerSelect = await screen.findByTestId("write-table-picker-select");
+    await userEvent.selectOptions(pickerSelect, "public.users");
+    expect(screen.getByLabelText(/Tabla/i)).toHaveValue("public.users");
+
+    // Now both ColumnPickers exist and the catalog has
+    // arrived — assert the three columns show up with the
+    // correct PK / nullable decoration.
+    const colsPanel = await screen.findByTestId("write-columns-picker");
+    expect(within(colsPanel).getByTestId("write-columns-picker-checkbox-ID")).toBeInTheDocument();
+    expect(within(colsPanel).getByTestId("write-columns-picker-pk-ID")).toBeInTheDocument();
+    expect(
+      within(colsPanel).getByTestId("write-columns-picker-checkbox-EMAIL"),
+    ).toBeInTheDocument();
+    expect(
+      within(colsPanel).queryByTestId("write-columns-picker-pk-EMAIL"),
+    ).not.toBeInTheDocument();
+
+    // The seeded manual chip "X" must still survive alongside
+    // anything the picker is doing — manual overrides and
+    // picker state share one underlying array.
+    expect(screen.getByTestId("write-columns-chip-0")).toHaveTextContent("X");
+
+    // Toggle the EMAIL checkbox on — chips array should gain it.
+    await userEvent.click(
+      within(colsPanel).getByTestId("write-columns-picker-checkbox-EMAIL"),
+    );
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("write-columns")).getByText("EMAIL"),
+      ).toBeInTheDocument(),
+    );
+
+    // The keyColumns picker auto-ticked the PK (ID) on mount
+    // because the chip list was empty and the catalog had a
+    // PK. Verify the chip array reflects that.
+    const keyChips = screen.getByTestId("write-key-columns");
+    expect(within(keyChips).getByText("ID")).toBeInTheDocument();
+    expect(within(keyChips).queryByText("EMAIL")).not.toBeInTheDocument();
+
+    // Submit and verify the picked columns land on the wire
+    // as JSON-as-string in correct order, AND the keyColumns
+    // PK auto-seed flows through too.
+    await userEvent.click(screen.getByRole("button", { name: /^Crear$/i }));
+    await waitFor(() =>
+      expect(findFetchCall(spy, "/sso-admin/write/save")).toBeDefined(),
+    );
+    const body = JSON.parse(
+      (findFetchCall(spy, "/sso-admin/write/save")![1] as RequestInit)
+        .body as string,
+    );
+    // Chip order: ["X", "EMAIL"] (manually seeded X, picker toggled EMAIL).
+    expect(body.columns).toBe('["X","EMAIL"]');
+    // keyColumns = ["ID"] from the auto-PK seed.
+    expect(body.keyColumns).toBe('["ID"]');
+    expect(body.tableName).toBe("public.users");
+    expect(body.microserviceId).toBe(7);
+  });
+
+  it("without a qualified `schema.table`, the column picker panels stay hidden even if a microservice is picked", async () => {
+    const ms = mkMicroservice({
+      id: 7,
+      instanceName: "postgres",
+      dialect: "postgres",
+    });
+    const spy = buildFetchSpy({
+      writes: [],
+      microservices: [ms],
+    });
+    vi.stubGlobal("fetch", spy);
+
+    renderPage();
+    await userEvent.click(await screen.findByTestId("new-write"));
+    await userEvent.type(screen.getByLabelText(/UUID/i), "smoke-cols-none");
+
+    // Pick microservice but leave Tabla blank — the picker
+    // gates on a qualified `schema.table`.
+    await userEvent.selectOptions(
+      screen.getByTestId("write-microservice"),
+      "7",
+    );
+    // Tabla input is empty — no qualified pair.
+    expect(screen.getByLabelText(/Tabla/i)).toHaveValue("");
+    expect(screen.queryByTestId("write-columns-picker")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("write-key-columns-picker"),
+    ).not.toBeInTheDocument();
+
+    // The /columns endpoint must not have been called.
+    const colCalls = spy.mock.calls.filter(([url]) => {
+      const u = typeof url === "string" ? url : url.toString();
+      return /\/query-service-[^/]+\/columns/.test(u);
+    });
+    expect(colCalls.length).toBe(0);
   });
 });
