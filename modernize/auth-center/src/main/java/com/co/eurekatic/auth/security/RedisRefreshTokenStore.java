@@ -54,6 +54,16 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
     private final ObjectMapper mapper;
     private final RefreshTokenProperties props;
 
+    /**
+     * Tombstone TTL: how long a "this hash has been seen" marker
+     * lives after the live record is deleted. Set to the full
+     * token TTL — a replay attempt at any point during the cookie's
+     * declared lifetime still triggers reuse-detection. After this
+     * window the replay falls through to NotFound, which is the
+     * correct behaviour (the cookie is past its own Max-Age).
+     */
+    private static final long TOMBSTONE_TTL_SECONDS = 30L * 24 * 60 * 60;
+
     public RedisRefreshTokenStore(
             StringRedisTemplate redis,
             ObjectMapper mapper,
@@ -128,12 +138,40 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
         }
 
         if (json == null) {
-            // The token was never minted or already consumed. We do
-            // NOT scan the family SETs looking for it — the only way
-            // an attacker reaches this branch is by replaying a
-            // captured cookie AFTER the legitimate user has already
-            // rotated. The legitimate rotation's MULTI block already
-            // wiped the family, so there is nothing to find here.
+            // Token is not live. It could be (a) never minted / past
+            // its TTL, or (b) a replay of an already-rotated cookie.
+            // Distinguish via the tombstone key we write on every
+            // successful rotation: if the tombstone is present this
+            // is a reuse event, otherwise it's a genuine NotFound.
+            String tombstone;
+            try {
+                tombstone = redis.opsForValue().get(replayKey(hash));
+            } catch (DataAccessException e) {
+                log.error("Redis unavailable on rotate (tombstone read) hash_prefix={}",
+                        hashPrefix(hash), e);
+                return new RefreshOutcome.Unavailable();
+            }
+            if (tombstone != null) {
+                String[] parts = tombstone.split("\\|", 2);
+                String username = parts.length > 0 ? parts[0] : "?";
+                String familyId = parts.length > 1 ? parts[1] : "?";
+                log.warn("Refresh-token reuse detected via tombstone — user={} family={}",
+                        username, shortFamily(familyId));
+                // Wipe the entire family — RFC 9700 §4.14.2 mandates
+                // that any subsequent live token in the family be
+                // invalidated as a side effect of detecting the
+                // reuse. Without this, the legitimate user's newer
+                // token (minted by the rotation that produced the
+                // tombstone) would still be valid.
+                try {
+                    revokeFamily(familyId);
+                } catch (RefreshUnavailableException ignored) {
+                    // best-effort; we're already returning
+                    // ReuseDetected which causes the controller to
+                    // 401 + clear the cookie.
+                }
+                return new RefreshOutcome.ReuseDetected(username, familyId);
+            }
             return new RefreshOutcome.NotFound();
         }
 
@@ -147,7 +185,8 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
             return new RefreshOutcome.NotFound();
         }
 
-        // Step 2: atomically GETDEL the hash + wipe the family in MULTI.
+        // Step 2: atomically GETDEL the hash + wipe the family +
+        // write the tombstone for reuse-detection on replay.
         try {
             List<Object> results = redis.execute(new SessionCallback<List<Object>>() {
                 @SuppressWarnings({"rawtypes", "unchecked"})
@@ -163,6 +202,13 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
                     }
                     operations.opsForSet().remove(familyKey(existing.familyId()), hash);
                     operations.delete(familyKey(existing.familyId()));
+                    // Tombstone: "u|familyId" with the configured TTL.
+                    // A subsequent rotate() call against this same
+                    // hash will see the tombstone, NOT find the live
+                    // record, and return ReuseDetected.
+                    operations.opsForValue().set(replayKey(hash),
+                            existing.username() + "|" + existing.familyId(),
+                            Duration.ofSeconds(TOMBSTONE_TTL_SECONDS));
                     return operations.exec();
                 }
             });
@@ -236,6 +282,11 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
                     if (members != null) {
                         for (String member : members) {
                             operations.opsForValue().getAndDelete(hashKey(member));
+                            // Clear any tombstone that points at this
+                            // hash, so a logged-out token can't be
+                            // confused with a replay after the family
+                            // is wiped.
+                            operations.delete(replayKey(member));
                         }
                     }
                     operations.delete(fk);
@@ -296,6 +347,15 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
 
     private String familyKey(String familyId) {
         return props.keyPrefix() + ":family:" + familyId;
+    }
+
+    /**
+     * Tombstone key: written on every successful rotation so a
+     * subsequent rotate() call against the same (now-deleted) hash
+     * can detect the replay. See {@link #rotate(String)}.
+     */
+    private String replayKey(String hash) {
+        return props.keyPrefix() + ":replay:" + hash;
     }
 
     private static String sha256Hex(String input) {
