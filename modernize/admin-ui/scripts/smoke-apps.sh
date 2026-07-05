@@ -133,12 +133,23 @@ API_ROLE_COUNT=$(python3 -c "import json; d=json.load(open('/tmp/smoke-app-get.j
   || bad "GET /app/{id} response has no roleIds — binding didn't round-trip"
 
 # 5b. /roles/checked
+# Asserts the JSON shape uses the suffixed `roleId` field (not
+# bare `id`) — the frontend AppRoleChecked type depends on this.
 if [ -n "$ROLE_ID" ]; then
   CHECKED=$(curl -sS "$GATEWAY/api/sso-admin/app/$APP_ID/roles/checked" "${AUTH[@]}")
+  HAS_SUFFIXED=$(echo "$CHECKED" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+print('yes' if data and 'roleId' in data[0] else 'no')
+")
+  [ "$HAS_SUFFIXED" = "yes" ] \
+    && ok "/roles/checked response uses 'roleId' field (matches frontend)" \
+    || bad "/roles/checked response uses bare 'id' — frontend AppRoleChecked.{roleId} would be undefined at runtime"
+
   CHECKED_FOR_ROLE=$(echo "$CHECKED" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
-match = [r for r in data if str(r.get('id')) == '$ROLE_ID' or str(r.get('roleId')) == '$ROLE_ID']
+match = [r for r in data if str(r.get('roleId')) == '$ROLE_ID']
 print('yes' if match and match[0].get('checked') else 'no')
 ")
   [ "$CHECKED_FOR_ROLE" = "yes" ] \

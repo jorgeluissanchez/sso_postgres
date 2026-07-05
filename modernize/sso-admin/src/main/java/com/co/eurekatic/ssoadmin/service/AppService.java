@@ -243,8 +243,17 @@ public class AppService {
 
     /* ====================== checked-list records ====================== */
 
-    public record RoleChecked(Long id, String name, boolean checked) {}
-    public record UserChecked(Long id, String username, boolean checked) {}
-    public record RouteChecked(Long id, String name, String path, boolean checked) {}
-    public record MicroserviceChecked(Long id, String serviceId, String kind, boolean checked) {}
+    // NOTE: the id-field names use the suffixed convention
+    // (roleId / userId / routeId / microserviceId) to match the
+    // rest of the module — see EndpointService.RoleChecked,
+    // RouteService.RoleChecked, RoleAdminService.UserRoleChecked.
+    // The frontend types in admin-ui/src/api/types.ts depend on
+    // these exact names. (An earlier draft used bare `id`, which
+    // caused the admin-ui Apps binding drawer to silently fire
+    // POST /app/{id}/role/undefined at runtime — see
+    // admin-ui/scripts/smoke-apps-browser-flow.md.)
+    public record RoleChecked(Long roleId, String name, boolean checked) {}
+    public record UserChecked(Long userId, String username, boolean checked) {}
+    public record RouteChecked(Long routeId, String name, String path, boolean checked) {}
+    public record MicroserviceChecked(Long microserviceId, String serviceId, String kind, boolean checked) {}
 }
