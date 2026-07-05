@@ -38,34 +38,22 @@ public class AuthController {
     }
 
     /**
-     * Returns a fresh access token for the bearer of the supplied
-     * refresh token. The refresh token is currently a UUID; for the MVP
-     * we accept any non-empty string and issue a new access token for
-     * the user identified by the {@code Authorization} header. A real
-     * implementation would verify the refresh token against a stored
-     * value, rotate it, and revoke the old one.
-     */
-    @GetMapping("/getToken")
-    public ResponseEntity<?> getToken(
-            @RequestParam("refreshToken") String refreshToken,
-            Authentication authentication) {
-        if (refreshToken == null || refreshToken.isBlank()) {
-            throw new AccessDeniedException("Missing refreshToken");
-        }
-        String username = principalName(authentication);
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException(username));
-        Set<String> roles = roleNames(user);
-        return ResponseEntity.ok(new com.co.eurekatic.common.dto.AuthDtos.TokenResponse(
-                jwt.issueAccessToken(username, roles),
-                refreshToken,
-                3_600L));
-    }
-
-    /**
      * Service-to-service login. The {@code apiToken} is a long-lived
      * credential bound to a user; on success we issue an access token
      * marked {@code typ=api}.
+     *
+     * <p><b>About a previous endpoint that lived here:</b> {@code GET
+     * /getToken?refreshToken=…} was an MVP placeholder that accepted
+     * any non-empty {@code refreshToken} and re-issued an access token
+     * for the bearer of the {@code Authorization} header. The
+     * {@code refreshToken} parameter was decorative — it was neither
+     * validated against any store nor rotated. Removal motivation is
+     * documented in the security note in the project README.
+     * Clients that actually need to rotate a refresh token use
+     * {@code POST /api/auth/refresh} (or {@code POST /auth/refresh}
+     * via the api-gateway), which is backed by
+     * {@code RefreshTokenStore.rotate} with full RFC 9700 §4.14
+     * family revocation.
      */
     @GetMapping("/getApiToken")
     public ResponseEntity<?> getApiToken(@RequestParam("apiToken") String apiToken) {
