@@ -357,6 +357,81 @@ class SsoAdminIntegrationTest {
     }
 
     @Test
+    void restorePasswordEnablesUserWithoutAuth() throws Exception {
+        // Create a user directly via the repository (faster than going
+        // through POST /createAccount which now mints an activation
+        // token we don't need here), then trigger forgotPassword to
+        // issue a real restore token and dispatch it via the (mocked)
+        // EmailService. ArgumentCaptor pulls the token back out.
+        User u = new User();
+        u.setUsername("carol");
+        u.setEmail("carol@example.com");
+        u.setFullName("Carol");
+        u.setPassword(passwordEncoder.encode("oldpass1"));
+        u.setEnabled(true);
+        u.setActive(true);
+        u = userRepository.save(u);
+
+        client.get().uri(uri -> uri.path("/forgotPassword")
+                        .queryParam("email", "carol@example.com")
+                        .build())
+                .exchange()
+                .expectStatus().isOk();
+
+        org.mockito.ArgumentCaptor<String> tok = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(emailServiceMock)
+                .sendRestorePasswordEmail(org.mockito.ArgumentMatchers.eq(u), tok.capture());
+
+        String restoreToken = tok.getValue();
+        assertThat(restoreToken).hasSize(36); // UUID format, same as TokenService
+
+        // POST + JSON body — same shape as /activateAccount.
+        String body = mapper.writeValueAsString(Map.of(
+                "token", restoreToken,
+                "password", "newpass1"));
+        client.post().uri("/restorePassword")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isOk();
+
+        User after = userRepository.findByUsername("carol").orElseThrow();
+        // Restore does NOT touch enabled/active (only activate does),
+        // but it MUST clear the restore token column to enforce
+        // single-use semantics.
+        assertThat(after.getTokenRestore()).isNull();
+        assertThat(passwordEncoder.matches("newpass1", after.getPassword())).isTrue();
+    }
+
+    @Test
+    void restorePasswordWithUnknownTokenReturns404() throws Exception {
+        String body = mapper.writeValueAsString(Map.of(
+                "token", "does-not-exist",
+                "password", "newpass1"));
+        client.post().uri("/restorePassword")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isNotFound();
+    }
+
+    @Test
+    void restorePasswordRejectsShortPassword() throws Exception {
+        // Same controller-side validation contract as
+        // activateAccountRejectsShortPassword — see that test for
+        // the rationale. The shared TokenPasswordRequest DTO is
+        // what makes this a single pin.
+        String body = mapper.writeValueAsString(Map.of(
+                "token", "anything",
+                "password", "123"));
+        client.post().uri("/restorePassword")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isBadRequest();
+    }
+
+    @Test
     void roleCreateAndListRoundTrip() throws Exception {
         String token = tokenFor("root", "ADMIN");
 
