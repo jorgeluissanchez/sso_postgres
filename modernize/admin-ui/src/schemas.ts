@@ -113,6 +113,25 @@ export const routeFormSchema = z.object({
 });
 
 /**
+ * App entity (SSO_V2). Two fields:
+ * <ul>
+ *   <li>{@code name} — unique, required, max 255. Backend also
+ *       enforces this via Bean Validation; duplicate-name
+ *       errors surface as a 409 {@code DUPLICATE} and the
+ *       {@code Form} component renders them as a red toast.</li>
+ *   <li>{@code description} — optional, max 500. Empty string
+ *       coerces to {@code ""} so the input keeps a stable shape.</li>
+ * </ul>
+ * Bindings (roles/users/routes/microservices) are NOT in the
+ * schema — they ride on dedicated endpoints, so each toggle
+ * is its own HTTP round-trip with explicit error reporting.
+ */
+export const appFormSchema = z.object({
+  name: z.string().min(1, "Requerido").max(255, "Máximo 255 caracteres"),
+  description: z.string().max(500, "Máximo 500 caracteres").default(""),
+});
+
+/**
  * Schema for the Queries Catalog admin form. The two
  * cross-field checks worth noting:
  * <ul>
@@ -166,6 +185,7 @@ export type GroupFormValues = z.infer<typeof groupFormSchema>;
 export type MicroserviceFormValues = z.infer<typeof microserviceFormSchema>;
 export type EndpointFormValues = z.infer<typeof endpointFormSchema>;
 export type RouteFormValues = z.infer<typeof routeFormSchema>;
+export type AppFormValues = z.infer<typeof appFormSchema>;
 export type QueryFormValues = z.infer<typeof queryFormSchema>;
 
 /**

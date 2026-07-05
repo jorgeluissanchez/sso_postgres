@@ -13,6 +13,7 @@ import { EndpointsListPage } from "@/pages/endpoints/EndpointsListPage";
 import { RoutesListPage } from "@/pages/routes/RoutesListPage";
 import { RolesListPage } from "@/pages/roles/RolesListPage";
 import { UsersListPage } from "@/pages/users/UsersListPage";
+import { AppsListPage } from "@/pages/apps/AppsListPage";
 
 /**
  * Router. Public routes: /login, /activate. Everything under /admin
@@ -44,6 +45,7 @@ export const router = createBrowserRouter([
           { path: "dynamic-crud", element: <QueriesDynamicPage /> },
           { path: "endpoints", element: <EndpointsListPage /> },
           { path: "routes", element: <RoutesListPage /> },
+          { path: "apps", element: <AppsListPage /> },
         ],
       },
     ],

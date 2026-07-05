@@ -11,6 +11,7 @@ const items = [
   { to: "/admin/dynamic-crud", label: "Dynamic CRUD" },
   { to: "/admin/endpoints", label: "Endpoints" },
   { to: "/admin/routes", label: "Rutas" },
+  { to: "/admin/apps", label: "Apps" },
 ];
 
 export function Sidebar() {

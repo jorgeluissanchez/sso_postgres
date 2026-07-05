@@ -353,6 +353,76 @@ export interface QueryRoleChecked {
  *  the SQL type mapping. */
 export type QueryParamValue = string | number | boolean | null;
 
+// ====================== sso-admin / apps ======================
+
+/**
+ * CRUD payload for the App entity. {@code id} is only required
+ * for {@code update}; the create endpoint ignores it. Bindings
+ * (roles/users/routes/microservices) are NOT sent here — they're
+ * managed via the dedicated POST/DELETE endpoints so each
+ * association is a single round-trip the UI can audit one click
+ * at a time.
+ */
+export interface AppRequest {
+  id?: number;
+  name: string;
+  description?: string | null;
+}
+
+/**
+ * Read shape for {@code GET /sso-admin/app/getApps} and the
+ * per-id variant. {@code roleIds / userIds / routeIds /
+ * microserviceIds} are denormalized on the row so the table
+ * can render binding counts without a fan-out round-trip.
+ * {@code createdDate} is ISO-8601 from the DB default.
+ */
+export interface AppResponse {
+  id: number;
+  name: string;
+  description: string | null;
+  createdDate: string;
+  roleIds: number[];
+  userIds: number[];
+  routeIds: number[];
+  microserviceIds: number[];
+}
+
+/** Per-app checked-listing of roles. Mirrors
+ *  {@code com.co.eurekatic.ssoadmin.service.AppService.RoleChecked}. */
+export interface AppRoleChecked {
+  roleId: number;
+  name: string;
+  checked: boolean;
+}
+
+/** Per-app checked-listing of users. The identifying field is
+ *  {@code username} (matches the backend record). */
+export interface AppUserChecked {
+  userId: number;
+  username: string;
+  checked: boolean;
+}
+
+/** Per-app checked-listing of routes. We show both {@code name}
+ *  and {@code path} in the UI so an admin can spot the wrong
+ *  route by its URL even when two routes share a label. */
+export interface AppRouteChecked {
+  routeId: number;
+  name: string;
+  path: string;
+  checked: boolean;
+}
+
+/** Per-app checked-listing of microservices. Identifying field
+ *  is {@code serviceId} (the registry id, not the numeric pk);
+ *  {@code kind} lets us badge REST vs QUERY rows in the list. */
+export interface AppMicroserviceChecked {
+  microserviceId: number;
+  serviceId: string;
+  kind: string;
+  checked: boolean;
+}
+
 /**
  * Body of {@code POST /query-service-<instance>/query}. The
  * service returns a list of objects keyed by JDBC column label

@@ -8,6 +8,12 @@
  */
 import { apiClient } from "./client";
 import type {
+  AppMicroserviceChecked,
+  AppRequest,
+  AppResponse,
+  AppRoleChecked,
+  AppRouteChecked,
+  AppUserChecked,
   BindUserRoleRequest,
   ContainerStatusResponse,
   CreateAccountRequest,
@@ -233,4 +239,68 @@ export const queriesApi = {
       { base: "" },
     );
   },
+};
+
+// ====================== apps ======================
+
+/**
+ * CRUD + 4-family bindings for the App entity (SSO_V2).
+ *
+ * <p>The binding endpoints follow the same convention as
+ * {@link routesApi}: POST binds, DELETE unbinds, GET
+ * {@code /<family>s/checked} returns all rows in the target
+ * table each with a {@code checked: boolean} so the UI can
+ * render a per-row toggle list (the legacy {@code QueriesAdminPage}
+ * pattern). Bind calls return 204; the wire returns no body
+ * beyond HTTP status.
+ */
+export const appsApi = {
+  /* ============== CRUD ============== */
+  list: () => apiClient.get<AppResponse[]>("/sso-admin/app/getApps"),
+  getById: (id: number) =>
+    apiClient.get<AppResponse>(`/sso-admin/app/${id}`),
+  create: (body: AppRequest) =>
+    apiClient.post<AppResponse>("/sso-admin/app/save", body),
+  update: (body: AppRequest) =>
+    apiClient.put<AppResponse>("/sso-admin/app/update", body),
+  delete: (id: number) =>
+    apiClient.delete<void>(`/sso-admin/app/${id}`),
+
+  /* ============== role family ============== */
+  getRolesChecked: (id: number) =>
+    apiClient.get<AppRoleChecked[]>(`/sso-admin/app/${id}/roles/checked`),
+  bindRole: (id: number, roleId: number) =>
+    apiClient.post<void>(`/sso-admin/app/${id}/role/${roleId}`),
+  unbindRole: (id: number, roleId: number) =>
+    apiClient.delete<void>(`/sso-admin/app/${id}/role/${roleId}`),
+
+  /* ============== user family ============== */
+  getUsersChecked: (id: number) =>
+    apiClient.get<AppUserChecked[]>(`/sso-admin/app/${id}/users/checked`),
+  bindUser: (id: number, userId: number) =>
+    apiClient.post<void>(`/sso-admin/app/${id}/user/${userId}`),
+  unbindUser: (id: number, userId: number) =>
+    apiClient.delete<void>(`/sso-admin/app/${id}/user/${userId}`),
+
+  /* ============== route family ============== */
+  getRoutesChecked: (id: number) =>
+    apiClient.get<AppRouteChecked[]>(`/sso-admin/app/${id}/routes/checked`),
+  bindRoute: (id: number, routeId: number) =>
+    apiClient.post<void>(`/sso-admin/app/${id}/route/${routeId}`),
+  unbindRoute: (id: number, routeId: number) =>
+    apiClient.delete<void>(`/sso-admin/app/${id}/route/${routeId}`),
+
+  /* ============== microservice family ============== */
+  getMicroservicesChecked: (id: number) =>
+    apiClient.get<AppMicroserviceChecked[]>(
+      `/sso-admin/app/${id}/microservices/checked`,
+    ),
+  bindMicroservice: (id: number, microserviceId: number) =>
+    apiClient.post<void>(
+      `/sso-admin/app/${id}/microservice/${microserviceId}`,
+    ),
+  unbindMicroservice: (id: number, microserviceId: number) =>
+    apiClient.delete<void>(
+      `/sso-admin/app/${id}/microservice/${microserviceId}`,
+    ),
 };
