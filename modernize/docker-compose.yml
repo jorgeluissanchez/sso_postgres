@@ -127,6 +127,13 @@ services:
     restart: unless-stopped
     mem_limit: 256m
     mem_reservation: 128m
+    # Mapped to 127.0.0.1 so the host (and an IDE on the host)
+    # can reach the container without going through the bridge
+    # IP 172.18.0.x. The bind to loopback is deliberate — this
+    # port must NOT be reachable from the LAN. Production
+    # deployments may need to remove or firewall this mapping.
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     healthcheck:
       # `redis-cli ping` returns "PONG" when the server is ready
@@ -290,10 +297,17 @@ services:
       SSO_EMAIL_APP_NAME: ${SSO_EMAIL_APP_NAME}
       SSO_EMAIL_LOGO_URL: ${SSO_EMAIL_LOGO_URL}
       # Public URLs of the activation/restore links — these are
-      # what the user clicks in the email, so they must be the
-      # gateway address, not the sso-admin's internal one.
-      SSO_ACTIVATION_URL: "http://localhost:${API_GATEWAY_PORT:-8080}/sso-admin/activateAccount"
-      SSO_RESTORE_URL: "http://localhost:${API_GATEWAY_PORT:-8080}/sso-admin/restorePassword"
+      # Public URLs of the activation/restore links — these are
+      # what the user clicks in the email. After the
+      # POST-with-body security fix landed in this branch
+      # (commits 2 + 3 flipped the controllers; the SPA now hosts
+      # the password form), these point at the SPA landing
+      # pages under /admin/** instead of the legacy
+      # /sso-admin/activateAccount GET endpoint. The gateway's
+      # AdminUiGlobalFilter serves the SPA from /admin/** and
+      # React Router owns the route + form.
+      SSO_ACTIVATION_URL: "http://localhost:${API_GATEWAY_PORT:-8080}/admin/activate"
+      SSO_RESTORE_URL: "http://localhost:${API_GATEWAY_PORT:-8080}/admin/restore-password"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8083/actuator/health | grep -q UP || exit 1"]
       interval: 10s
