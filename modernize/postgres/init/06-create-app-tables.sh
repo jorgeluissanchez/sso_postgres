@@ -3,22 +3,29 @@
 # 06-create-app-tables.sh
 #
 # Crea la entidad APP + las 4 tablas M:M (role_app, app_users, app_route,
-# app_microservice) + las FKs id_app en ROUTE y MICROSERVICE. Refleja el
-# modelo SSO_V2 que la modernization no tenía.
+# app_microservice) + la FK id_app en MICROSERVICE. Refleja el modelo
+# SSO_V2 que la modernization no tenía.
 #
 # Modelo:
 #   app             — raíz. id_app, name unique, description, created_date.
 #   role_app        — M:N entre APP y ROLE (acceso amplio: un rol ve TODAS
 #                     las rutas de la app). Convive con role_route (fino).
 #   app_users       — M:N entre APP y users (quienes usan la app).
-#   app_route       — M:N entre APP y ROUTE. Convive con ROUTE.id_app (FK
-#                     directa) — la FK da la app "primaria" rápida, la M:N
-#                     permite multi-app. Mismo patrón que el legacy SSO_V2.
-#   app_microservice— M:N entre APP y MICROSERVICE. Igual rationale.
+#   app_route       — M:N entre APP y ROUTE. Es la ÚNICA relación de
+#                     membership entre una ruta y sus apps — ROUTE NO
+#                     tiene una FK id_app propia (se probó, y se
+#                     descartó: un FK singular no puede reflejar que
+#                     una ruta pertenezca a más de una app, y además
+#                     quedaba desincronizado del M:N cuando un admin
+#                     bindeaba/desvinculaba rutas solo por acá).
+#   app_microservice— M:N entre APP y MICROSERVICE. Igual rationale que
+#                     app_route, pero MICROSERVICE SÍ conserva su FK
+#                     id_app como "app primaria" (fuera del alcance de
+#                     este cambio; solo ROUTE perdió la suya).
 #
-# FKs directos:
-#   ROUTE.id_app           — la app "principal" de la ruta (nullable).
+# FK directa:
 #   MICROSERVICE.id_app    — la app "principal" del microservicio.
+#   (ROUTE ya no tiene columna id_app — ver app_route arriba.)
 #
 # Notas de idempotencia:
 #   - CREATE TABLE IF NOT EXISTS para tablas nuevas.
@@ -86,9 +93,9 @@ CREATE TABLE IF NOT EXISTS app_users (
 
 CREATE INDEX IF NOT EXISTS idx_app_users_user ON app_users(id_user);
 
--- APP_ROUTE — M:N entre app y ROUTE. Permite que una misma ruta
--- aparezca en varias apps (membership explícito), independiente del
--- FK ROUTE.id_app que marca la app "primaria".
+-- APP_ROUTE — M:N entre app y ROUTE. Es la ÚNICA relación de
+-- membership entre una ruta y sus app(s) — permite que una misma
+-- ruta aparezca en varias apps. ROUTE no tiene una FK id_app propia.
 CREATE TABLE IF NOT EXISTS app_route (
     id_app    BIGINT NOT NULL REFERENCES app(id_app)     ON DELETE CASCADE,
     id_route  BIGINT NOT NULL REFERENCES ROUTE(ID_ROUTE) ON DELETE CASCADE,
@@ -107,15 +114,15 @@ CREATE TABLE IF NOT EXISTS app_microservice (
 
 CREATE INDEX IF NOT EXISTS idx_app_microservice_ms ON app_microservice(id_microservice);
 
--- FKs directos: agregan la columna id_app a las tablas existentes.
+-- FK directa: agrega la columna id_app solo a MICROSERVICE.
 -- Nullable (no rompe filas pre-existentes) + ON DELETE SET NULL
--- (borrar la app no borra la ruta ni el microservicio; quedan
--- "huérfanos" en app=NULL, que es el comportamiento esperado: la
--- ruta/microservicio sigue existiendo solo, sin app).
-ALTER TABLE ROUTE         ADD COLUMN IF NOT EXISTS id_app BIGINT REFERENCES app(id_app) ON DELETE SET NULL;
+-- (borrar la app no borra el microservicio; queda "huérfano" en
+-- app=NULL, que es el comportamiento esperado).
+--
+-- ROUTE NO recibe esta columna — app_route (arriba) es su única
+-- relación de membership con App.
 ALTER TABLE MICROSERVICE  ADD COLUMN IF NOT EXISTS id_app BIGINT REFERENCES app(id_app) ON DELETE SET NULL;
 
-CREATE INDEX IF NOT EXISTS idx_route_app        ON ROUTE(id_app);
 CREATE INDEX IF NOT EXISTS idx_microservice_app ON MICROSERVICE(id_app);
 
 EOSQL

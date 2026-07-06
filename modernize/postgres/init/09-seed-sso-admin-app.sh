@@ -9,24 +9,20 @@
 # query (RouteRepository.findVisibleForRoles in
 # common/.../repository/RouteRepository.java): the App path.
 #
-#   SELECT r2.id FROM Route r2
-#     WHERE r2.app IS NOT NULL
-#       AND r2.app.id IN (
-#           SELECT ra.id FROM App ra JOIN ra.roles rol
-#            WHERE rol.id IN :roleIds
-#       )
+#   SELECT r2.id FROM App a2 JOIN a2.routes r2 JOIN a2.roles rol2
+#    WHERE rol2.id IN :roleIds
 #
-# Three rows are mutated:
-#   1. role_app     — bind ADMIN to the SSO-ADMIN app.
-#   2. ROUTE.id_app  — point every /admin/** route at the
-#                      SSO-ADMIN app (only routes whose
-#                      id_app was NULL are touched; pre-
-#                      existing bindings like Usuarios→
-#                      ColombiaEvaluadora are preserved).
-#   3. app_route    — populate the M:N between the SSO-ADMIN
-#                     app and every /admin/** route (or
-#                     more precisely, every route whose
-#                     id_app is now SSO-ADMIN).
+# app_route (App.routes) is the SOLE app-membership relationship
+# for a route — ROUTE has no id_app FK of its own (removed; a
+# route can legitimately belong to more than one app, which a
+# singular FK couldn't represent, and it drifted out of sync
+# with app_route whenever an admin bound/unbound via the App
+# edit page's route picker instead).
+#
+# Two rows are mutated:
+#   1. role_app  — bind ADMIN to the SSO-ADMIN app.
+#   2. app_route — populate the M:N between the SSO-ADMIN app
+#                  and every /admin/** route.
 #
 # The SSO-ADMIN app row was pre-created as a placeholder
 # shell (name 'SSO-ADMIN', id 6, no bindings). We populate
@@ -37,8 +33,6 @@
 #
 # Every statement is idempotent:
 #   - role_app uses ON CONFLICT (id_app, id_role) DO NOTHING
-#   - ROUTE.id_app UPDATE is gated by id_app IS NULL so we
-#     never overwrite an intentional admin-set binding
 #   - app_route uses ON CONFLICT (id_app, id_route) DO NOTHING
 #
 # Result: an admin calling GET /sso-admin/myMenu still
@@ -63,34 +57,16 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-'
     ON CONFLICT (id_app, id_role) DO NOTHING;
 
     -- ========================================================================
-    -- 2. ROUTE.id_app — every /admin/** route into SSO-ADMIN
+    -- 2. app_route — fill the M:N for SSO-ADMIN
     -- ========================================================================
-    -- Only touches rows where id_app IS NULL — pre-existing
-    -- manual bindings (e.g. Usuarios→ColombiaEvaluadora
-    -- created by an earlier smoke run) survive. Those
-    -- routes are still visible to ADMIN via the direct
-    -- ROLE_ROUTE branch + the now-also-app-bound Colombia-
-    -- Evaluadora branch, so nothing in /myMenu regresses.
-    UPDATE ROUTE
-       SET id_app = (SELECT id_app FROM app WHERE name = 'SSO-ADMIN')
-     WHERE PATH LIKE '/admin/%'
-       AND id_app IS NULL;
-
-    -- ========================================================================
-    -- 3. app_route — fill the M:N for SSO-ADMIN
-    -- ========================================================================
-    -- Idempotent: a route may already be linked to
-    -- SSO-ADMIN via the previous UPDATE setting id_app —
-    -- we still insert the explicit app_route row so the
-    -- AppController.getRoutesChecked call has the row to
-    -- report.
+    -- Every /admin/** route joins SSO-ADMIN's app_route set
+    -- directly by path pattern — no id_app FK involved.
     INSERT INTO app_route (id_app, id_route)
     SELECT a.id_app, ro.ID_ROUTE
     FROM app a
     CROSS JOIN ROUTE ro
     WHERE a.name = 'SSO-ADMIN'
       AND ro.PATH LIKE '/admin/%'
-      AND ro.id_app = a.id_app
     ON CONFLICT (id_app, id_route) DO NOTHING;
 
 EOSQL
