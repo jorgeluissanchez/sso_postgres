@@ -244,6 +244,36 @@ export const queriesApi = {
   },
 };
 
+// ====================== menu ======================
+
+/**
+ * The per-caller visible sidebar menu. Backed by
+ * {@code GET /sso-admin/myMenu}, which is
+ * {@code .authenticated()} on the server (NOT
+ * {@code hasRole("ADMIN")}) — non-admin users with route
+ * bindings also get a 200 + a (possibly empty) filtered list.
+ *
+ * <p>Filtering happens server-side via
+ * {@code RouteRepository.findVisibleForRoles(roleIds)}: the
+ * union of (a) routes whose {@code id_app} is bound to one
+ * of the caller's roles AND (b) routes with a direct
+ * {@code ROLE_ROUTE} binding for one of the caller's
+ * roles. The SPA receives the already-filtered list and
+ * simply renders it — no client-side trust required.
+ *
+ * <p>An empty array is a legitimate "no menu access"
+ * outcome, NOT an error.
+ */
+export const menuApi = {
+  /**
+   * The caller-keyed sidebar entries. Cached by TanStack
+   * Query under {@code ["myMenu"]} — see
+   * {@link useMyMenu}.
+   */
+  getMyMenu: () =>
+    apiClient.get<RouteResponse[]>("/sso-admin/myMenu"),
+};
+
 // ====================== apps ======================
 
 /**
