@@ -20,10 +20,27 @@ import { z } from "zod";
  * pre-scoping behavior). Either is a legitimate build — the
  * optional field keeps CI envs that haven't migrated from
  * crashing at startup.
+ *
+ * <p>{@code z.preprocess} normalizes an empty string to
+ * {@code undefined} before the {@code min(1).optional()} check
+ * runs. This matters because Docker's default build arg
+ * (see {@code api-gateway/Dockerfile}'s {@code ARG
+ * VITE_APP_NAME=""}) sets the var to {@code ""}, not "unset" —
+ * Vite inlines whatever is in {@code process.env} verbatim, so
+ * {@code import.meta.env.VITE_APP_NAME} is the literal empty
+ * string, not {@code undefined}. Zod's {@code .optional()}
+ * only tolerates a MISSING key, not a present-but-invalid one,
+ * so without this preprocess step every build that doesn't
+ * explicitly set {@code VITE_APP_NAME} would fail
+ * {@code min(1)} and crash the whole SPA at startup with
+ * "Invalid environment".
  */
 const envSchema = z.object({
   VITE_API_BASE: z.string().min(1).startsWith("/"),
-  VITE_APP_NAME: z.string().min(1).optional(),
+  VITE_APP_NAME: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.string().min(1).optional(),
+  ),
 });
 
 const parsed = envSchema.safeParse(import.meta.env);
