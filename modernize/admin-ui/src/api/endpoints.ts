@@ -7,6 +7,7 @@
  * in a follow-up if a backend field changes shape.
  */
 import { apiClient } from "./client";
+import { env } from "@/env";
 import type {
   AppMicroserviceChecked,
   AppRequest,
@@ -269,9 +270,27 @@ export const menuApi = {
    * The caller-keyed sidebar entries. Cached by TanStack
    * Query under {@code ["myMenu"]} — see
    * {@link useMyMenu}.
+   *
+   * <p>When {@code VITE_APP_NAME} is set in the build (it
+   * usually is for deployed SPA bundles), this method
+   * appends {@code ?app=<name>} so the backend resolves
+   * the name to an {@code App.id} and runs the scoped
+   * {@code RouteRepository.findVisibleForRoles(roleIds,
+   * appId)} — the SPA then sees ONLY the routes of its
+   * own app, never the menus of other apps the same user
+   * might be entitled to.
+   *
+   * <p>Without {@code VITE_APP_NAME}, the call goes out
+   * un-scoped and returns the union across every app
+   * the caller's roles grant — the pre-scoping behavior,
+   * useful for CI + dev sandboxes.
    */
-  getMyMenu: () =>
-    apiClient.get<RouteResponse[]>("/sso-admin/myMenu"),
+  getMyMenu: () => {
+    const qs = env.VITE_APP_NAME
+      ? `?app=${encodeURIComponent(env.VITE_APP_NAME)}`
+      : "";
+    return apiClient.get<RouteResponse[]>(`/sso-admin/myMenu${qs}`);
+  },
 };
 
 // ====================== apps ======================
