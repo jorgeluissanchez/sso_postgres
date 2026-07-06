@@ -102,4 +102,56 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
             ORDER BY r.menuOrder ASC, r.id ASC
             """)
     List<Route> findVisibleForRoles(@Param("roleIds") Collection<Long> roleIds);
+
+    /**
+     * Scoped variant of {@link #findVisibleForRoles(Collection)}:
+     * restricts the result to routes whose {@code id_app} points
+     * at the given app. Powers the
+     * {@code GET /sso-admin/myMenu?app=<name>} endpoint, where the
+     * SPA's {@code VITE_APP_NAME} is resolved to an
+     * {@link com.co.eurekatic.common.entity.App} id on the
+     * backend and used here as the scoping filter.
+     *
+     * <p>The {@code app.id = :appId} predicate is added to BOTH
+     * branches of the inner UNION (not just branch 1). Reason:
+     * a route can simultaneously satisfy the App-grant branch
+     * (its app is bound to one of the caller's roles via
+     * {@code role_app}) AND the fine-grained branch (it has a
+     * direct {@code role_route} binding). Adding the filter to
+     * only branch 1 would let a route in {@code OtherApp} leak
+     * through branch 2 when the caller asked for {@code ThisApp}.
+     * Adding it to both keeps the scoped result a true
+     * intersection of "visible to caller's roles" AND "belongs to
+     * the requested app".
+     *
+     * <p>Same {@code LEFT JOIN FETCH r.app} + ordering as the
+     * un-scoped overload — the response shape is unchanged.
+     *
+     * <p>Returns empty (not an error) when the caller's roles
+     * don't intersect the app's route set; the endpoint surfaces
+     * this as {@code 200 + []} per the {@code /myMenu} "what
+     * can I see?" contract.
+     */
+    @Query("""
+            SELECT DISTINCT r FROM Route r
+            LEFT JOIN FETCH r.app
+            WHERE r.id IN (
+                SELECT r2.id FROM Route r2
+                 WHERE r2.app IS NOT NULL
+                   AND r2.app.id = :appId
+                   AND r2.app.id IN (
+                       SELECT ra.id FROM App ra JOIN ra.roles rol
+                        WHERE rol.id IN :roleIds
+                   )
+                UNION
+                SELECT r3.id FROM Route r3 JOIN r3.roles rol3
+                 WHERE rol3.id IN :roleIds
+                   AND r3.app IS NOT NULL
+                   AND r3.app.id = :appId
+            )
+            ORDER BY r.menuOrder ASC, r.id ASC
+            """)
+    List<Route> findVisibleForRoles(
+            @Param("roleIds") Collection<Long> roleIds,
+            @Param("appId") Long appId);
 }
