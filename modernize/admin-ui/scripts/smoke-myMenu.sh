@@ -28,15 +28,31 @@
 #   5. The SSO-ADMIN App exists AND is bound to ADMIN via
 #      role_app (pin on the App-grant branch of the
 #      findVisibleForRoles union).
-#   6. The SSO-ADMIN App has >= 12 routes linked via
-#      app_route (and at least one of them has id_app
-#      set to the SSO-ADMIN app — the second join
-#      leg).
-#   7. /myMenu?app=SSO-ADMIN returns >= 12 routes —
-#      pins the new app-scoped overload of
-#      RouteRepository.findVisibleForRoles(roleIds,
-#      appId). SSO-ADMIN is the canonical name seeded
-#      by 09-seed-sso-admin-app.sh.
+#   6. The SSO-ADMIN App has >= 11 routes linked via
+#      app_route — 11, not 12: /admin/writes was
+#      deliberately unbound from SSO-ADMIN via
+#      AppService.unbindRoute (DELETE
+#      /app/{id}/route/{routeId}, the App edit page's
+#      route picker) and stays unbound. It's still
+#      visible in the UNSCOPED /myMenu (checks 2-4) via
+#      its direct role_route binding — unbinding from an
+#      app doesn't revoke a separate fine-grained grant.
+#      NOTE: ROUTE.id_app (the ROUTE table's "primary
+#      app" FK) is a SEPARATE, unrelated pointer used
+#      only for the CRUD response's appId/appName
+#      display fields — RouteRepository.findVisibleForRoles
+#      does NOT consult it; app_route (App.routes, the
+#      M:N AppService.bindRoute/unbindRoute mutate) is
+#      the sole source of truth for app membership.
+#   7. /myMenu?app=SSO-ADMIN returns >= 11 routes and
+#      EXCLUDES /admin/writes — pins the app-scoped
+#      overload of RouteRepository.findVisibleForRoles(
+#      roleIds, appId), which reads app_route (not
+#      ROUTE.id_app). Confirms the fix for: unbinding a
+#      route from an app via the app_route "checked"
+#      list must actually remove it from that app's
+#      scoped menu. SSO-ADMIN is the canonical name
+#      seeded by 09-seed-sso-admin-app.sh.
 #   8. /myMenu?app=Nonexistent returns 200 + 0 routes —
 #      pins the "unknown app -> 200 + []" contract from
 #      MyMenuService.forCaller(auth, appName). Catches
@@ -200,27 +216,25 @@ else
   bad "role_app missing ADMIN -> SSO-ADMIN binding (count=$ROLE_APP_COUNT)"
 fi
 
-# ---------- 6. SSO-ADMIN app has >= 12 routes linked ----------
+# ---------- 6. SSO-ADMIN app has >= 11 routes linked ----------
 hr
-echo ">>> 6. SSO-ADMIN App links >= 12 routes (app_route + ROUTE.id_app)"
+echo ">>> 6. SSO-ADMIN App links >= 11 routes via app_route"
 
 APP_ROUTE_COUNT=$($PSQL "SELECT count(*) FROM app_route ar JOIN app a ON a.id_app = ar.id_app WHERE a.name='SSO-ADMIN'" 2>/dev/null)
-if [ "$APP_ROUTE_COUNT" -ge 12 ] 2>/dev/null; then
-  ok "app_route has $APP_ROUTE_COUNT SSO-ADMIN links (>= 12)"
+if [ "$APP_ROUTE_COUNT" -ge 11 ] 2>/dev/null; then
+  ok "app_route has $APP_ROUTE_COUNT SSO-ADMIN links (>= 11)"
 else
-  bad "app_route has $APP_ROUTE_COUNT SSO-ADMIN links (expected >= 12)"
+  bad "app_route has $APP_ROUTE_COUNT SSO-ADMIN links (expected >= 11)"
 fi
 
-ROUTE_FKED_COUNT=$($PSQL "SELECT count(*) FROM ROUTE r JOIN app a ON a.id_app = r.id_app WHERE a.name='SSO-ADMIN' AND r.PATH LIKE '/admin/%'" 2>/dev/null)
-if [ "$ROUTE_FKED_COUNT" -ge 12 ] 2>/dev/null; then
-  ok "ROUTE.id_app points $ROUTE_FKED_COUNT routes at SSO-ADMIN (>= 12)"
-else
-  bad "ROUTE.id_app points $ROUTE_FKED_COUNT routes at SSO-ADMIN (expected >= 12)"
-fi
+# ROUTE.id_app is intentionally NOT asserted here anymore: it's a
+# separate "primary app" FK unrelated to authorization scoping
+# (see RouteRepository.findVisibleForRoles Javadoc) and may
+# legitimately drift from app_route without affecting the menu.
 
-# ---------- 7. ?app=SSO-ADMIN returns >= 12 routes ----------
+# ---------- 7. ?app=SSO-ADMIN returns >= 11 routes ----------
 hr
-echo ">>> 7. GET /sso-admin/myMenu?app=SSO-ADMIN returns >= 12 routes"
+echo ">>> 7. GET /sso-admin/myMenu?app=SSO-ADMIN returns >= 11 routes"
 
 APP_HTTP=$(curl -sS -o /tmp/mymenu-app-body.$$ -w '%{http_code}' \
   -H "Authorization: Bearer $ACCESS_JWT" \
@@ -233,23 +247,37 @@ else
 fi
 
 APP_COUNT=$(python3 -c "import json; print(len(json.load(open('/tmp/mymenu-app-body.$$'))))")
-if [ "$APP_COUNT" -ge 12 ]; then
-  ok "?app=SSO-ADMIN body has $APP_COUNT routes (>= 12)"
+if [ "$APP_COUNT" -ge 11 ]; then
+  ok "?app=SSO-ADMIN body has $APP_COUNT routes (>= 11)"
 else
-  bad "?app=SSO-ADMIN expected >= 12 routes, got $APP_COUNT"
+  bad "?app=SSO-ADMIN expected >= 11 routes, got $APP_COUNT"
   cat /tmp/mymenu-app-body.$$ || true
 fi
 
-# Pin one specific path as a regression catch — the legacy
-# /admin/users route is bound to ColombiaEvaluadora only
-# (pre-existing manual binding), so it MUST NOT appear when
-# the SPA scope is SSO-ADMIN. If it does, the JPQL app.id
-# filter on the fine-grained branch regressed.
 APP_BODY=$(cat /tmp/mymenu-app-body.$$)
+
+# Pin one specific path as a regression catch — /admin/users
+# is bound (via app_route) to a different app (not SSO-ADMIN),
+# so it MUST NOT appear when the SPA scope is SSO-ADMIN. If it
+# does, the app_route filter on the broad branch regressed.
 if echo "$APP_BODY" | grep -q '"/admin/users"'; then
-  bad "?app=SSO-ADMIN leaks the ColombiaEvaluadora-only /admin/users route (fine-grained branch regressed)"
+  bad "?app=SSO-ADMIN leaks /admin/users (bound to a different app via app_route — broad-branch filter regressed)"
 else
-  ok "?app=SSO-ADMIN correctly excludes /admin/users (ColombiaEvaluadora-only route)"
+  ok "?app=SSO-ADMIN correctly excludes /admin/users (bound to a different app via app_route)"
+fi
+
+# Pin the specific bug this session fixed — /admin/writes was
+# deliberately unbound from SSO-ADMIN via app_route (the App
+# edit page's route picker / AppService.unbindRoute). Before
+# this fix, RouteRepository.findVisibleForRoles filtered on
+# ROUTE.id_app (a separate FK untouched by unbindRoute), so an
+# unbound route kept leaking into the scoped menu. If this
+# check ever fails again, the query regressed back to using
+# id_app instead of app_route.
+if echo "$APP_BODY" | grep -q '"/admin/writes"'; then
+  bad "?app=SSO-ADMIN leaks /admin/writes (unbound from SSO-ADMIN via app_route — filter regressed to using ROUTE.id_app)"
+else
+  ok "?app=SSO-ADMIN correctly excludes /admin/writes (unbound via app_route)"
 fi
 rm -f /tmp/mymenu-app-body.$$
 
