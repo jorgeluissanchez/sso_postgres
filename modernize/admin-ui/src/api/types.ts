@@ -243,6 +243,25 @@ export interface EndpointMicroserviceChecked {
 
 // ====================== sso-admin / route ======================
 
+/**
+ * Wire shape for a `Route` row. Mirrors the backend
+ * {@code com.co.eurekatic.ssoadmin.dto.RouteResponse} record
+ * (full field list). The SPA-side TypeScript was missing
+ * {@code appId} and {@code appName} — added so the dynamic
+ * sidebar and any future per-app rendering can read them
+ * without losing type safety.
+ *
+ * <p>{@code idParent} is {@code null} for roots. Legacy data
+ * may carry {@code 0} as the root sentinel; the
+ * {@link buildTree} util normalises both.
+ *
+ * <p>{@code roleIds} is the set of role ids this Route is
+ * directly bound to (the {@code ROLE_ROUTE} join table).
+ * Per-row authorization for {@code GET /sso-admin/myMenu}
+ * uses BOTH this direct binding AND the route's
+ * {@code app->roles} chain — see
+ * {@code RouteRepository.findVisibleForRoles}.
+ */
 export interface RouteResponse {
   id: number;
   name: string;
@@ -251,6 +270,8 @@ export interface RouteResponse {
   menuOrder: number;
   type: string;
   idParent: number | null;
+  appId: number | null;
+  appName: string | null;
   roleIds: number[];
 }
 
@@ -262,6 +283,7 @@ export interface RouteRequest {
   menuOrder: number;
   type: string;
   idParent: number | null;
+  appId?: number | null;
 }
 
 export interface RouteRoleChecked {
