@@ -37,22 +37,18 @@
 #      visible in the UNSCOPED /myMenu (checks 2-4) via
 #      its direct role_route binding — unbinding from an
 #      app doesn't revoke a separate fine-grained grant.
-#      NOTE: ROUTE.id_app (the ROUTE table's "primary
-#      app" FK) is a SEPARATE, unrelated pointer used
-#      only for the CRUD response's appId/appName
-#      display fields — RouteRepository.findVisibleForRoles
-#      does NOT consult it; app_route (App.routes, the
-#      M:N AppService.bindRoute/unbindRoute mutate) is
-#      the sole source of truth for app membership.
+#      app_route (App.routes, the M:N AppService.bindRoute/
+#      unbindRoute mutate) is the sole app-membership
+#      relationship for a route — ROUTE has no "primary
+#      app" FK of its own.
 #   7. /myMenu?app=SSO-ADMIN returns >= 11 routes and
 #      EXCLUDES /admin/writes — pins the app-scoped
 #      overload of RouteRepository.findVisibleForRoles(
-#      roleIds, appId), which reads app_route (not
-#      ROUTE.id_app). Confirms the fix for: unbinding a
-#      route from an app via the app_route "checked"
-#      list must actually remove it from that app's
-#      scoped menu. SSO-ADMIN is the canonical name
-#      seeded by 09-seed-sso-admin-app.sh.
+#      roleIds, appId), which reads app_route. Confirms
+#      the fix for: unbinding a route from an app via the
+#      app_route "checked" list must actually remove it
+#      from that app's scoped menu. SSO-ADMIN is the
+#      canonical name seeded by 09-seed-sso-admin-app.sh.
 #   8. /myMenu?app=Nonexistent returns 200 + 0 routes —
 #      pins the "unknown app -> 200 + []" contract from
 #      MyMenuService.forCaller(auth, appName). Catches
@@ -227,10 +223,9 @@ else
   bad "app_route has $APP_ROUTE_COUNT SSO-ADMIN links (expected >= 11)"
 fi
 
-# ROUTE.id_app is intentionally NOT asserted here anymore: it's a
-# separate "primary app" FK unrelated to authorization scoping
-# (see RouteRepository.findVisibleForRoles Javadoc) and may
-# legitimately drift from app_route without affecting the menu.
+# No ROUTE.id_app assertion here — that column was removed
+# from ROUTE entirely; app_route (asserted above) is the only
+# app-membership relationship a route has.
 
 # ---------- 7. ?app=SSO-ADMIN returns >= 11 routes ----------
 hr
@@ -268,14 +263,16 @@ fi
 
 # Pin the specific bug this session fixed — /admin/writes was
 # deliberately unbound from SSO-ADMIN via app_route (the App
-# edit page's route picker / AppService.unbindRoute). Before
-# this fix, RouteRepository.findVisibleForRoles filtered on
-# ROUTE.id_app (a separate FK untouched by unbindRoute), so an
-# unbound route kept leaking into the scoped menu. If this
-# check ever fails again, the query regressed back to using
-# id_app instead of app_route.
+# edit page's route picker / AppService.unbindRoute). ROUTE
+# used to also have its own id_app FK (separate from app_route,
+# untouched by unbindRoute), which findVisibleForRoles filtered
+# on instead — so an unbound route kept leaking into the scoped
+# menu. That FK has since been removed from ROUTE entirely;
+# app_route is now the only relationship. If this check ever
+# fails again, something reintroduced a route<->app pointer
+# that bypasses app_route.
 if echo "$APP_BODY" | grep -q '"/admin/writes"'; then
-  bad "?app=SSO-ADMIN leaks /admin/writes (unbound from SSO-ADMIN via app_route — filter regressed to using ROUTE.id_app)"
+  bad "?app=SSO-ADMIN leaks /admin/writes (unbound from SSO-ADMIN via app_route — filter regressed to bypassing app_route)"
 else
   ok "?app=SSO-ADMIN correctly excludes /admin/writes (unbound via app_route)"
 fi
