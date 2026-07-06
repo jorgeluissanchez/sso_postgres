@@ -46,12 +46,13 @@ import java.util.Set;
  * (see the Javadoc on {@link User#addRole(Role)} for the same
  * pattern).
  *
- * <p>The {@link #routePrimary} / {@link #microservicePrimary}
- * OneToMany lists are the inverse side of {@link Route#getApp()}
- * and {@link Microservice#getApp()} — they're populated by JPA on
- * load and useful when navigating from an app to its "primary"
- * route/microservice (the FK column) without going through the
- * M:N join.
+ * <p>The {@link #microservicePrimary} OneToMany list is the
+ * inverse side of {@link Microservice#getApp()} — populated by
+ * JPA on load, useful when navigating from an app to its
+ * "primary" microservice (the FK column) without going through
+ * the M:N join. {@link Route} has no equivalent FK/primary
+ * pointer — {@code app_route} ({@link #routes}) is its sole
+ * app-membership relationship.
  */
 @Entity
 @Table(name = "app")
@@ -131,20 +132,15 @@ public class App {
     private Set<Microservice> microservices = new HashSet<>();
 
     /**
-     * Inverse side of {@link Route#getApp()} — routes whose
-     * {@code id_app} FK points at this app. Read-only via
-     * JPA; to attach a route as the "primary" of this app,
-     * call {@code route.setApp(this)}, not the setter here.
-     */
-    @OneToMany(mappedBy = "app", fetch = FetchType.LAZY)
-    @Setter(AccessLevel.NONE)
-    private Set<Route> routePrimary = new HashSet<>();
-
-    /**
      * Inverse side of {@link Microservice#getApp()} —
      * microservices whose {@code id_app} FK points at this
-     * app. Same "don't use the setter" rule as
-     * {@link #routePrimary}.
+     * app. Read-only via JPA; to attach a microservice as
+     * the "primary" of this app, call
+     * {@code microservice.setApp(this)}, not the setter here.
+     *
+     * <p>{@link Route} has no equivalent FK — {@code app_route}
+     * ({@link #routes}) is the sole app-membership relationship
+     * for routes; see {@link com.co.eurekatic.common.repository.RouteRepository}.
      */
     @OneToMany(mappedBy = "app", fetch = FetchType.LAZY)
     @Setter(AccessLevel.NONE)
