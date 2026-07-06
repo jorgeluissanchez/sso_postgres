@@ -192,6 +192,14 @@ services:
     build:
       context: .
       dockerfile: api-gateway/Dockerfile
+      args:
+        # Baked into the admin-ui SPA bundle at build time
+        # (api-gateway/Dockerfile stage 1 picks it up as an
+        # ARG + ENV pair). When set, the SPA sends
+        # ?app=<value> on GET /sso-admin/myMenu and the
+        # sidebar shows only the routes of that single App.
+        # Leave unset / set to "" for the un-scoped union.
+        VITE_APP_NAME: ${VITE_APP_NAME:-}
     image: eurekatic/api-gateway:1.0.0-SNAPSHOT
     container_name: sso-api-gateway
     restart: unless-stopped
