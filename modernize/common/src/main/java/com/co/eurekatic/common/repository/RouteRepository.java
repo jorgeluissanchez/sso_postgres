@@ -35,23 +35,6 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
     java.util.Optional<Route> findByNameAndPath(String name, String path);
 
     /**
-     * Routes whose {@code id_app} FK points at the given app.
-     * Powers the "primary" view of an app's routes and is one
-     * of the two paths the {@code /myMenu} endpoint unions
-     * when filtering by JWT roles.
-     */
-    List<Route> findAllByApp_Id(Long appId);
-
-    /**
-     * Routes whose {@code id_app} FK is null — "orphan"
-     * routes that exist outside any app. The menu endpoint
-     * treats these as "legacy / not yet categorized" and
-     * surfaces them only when the user has a fine-grained
-     * {@code role_route} binding for them.
-     */
-    List<Route> findAllByApp_IdIsNull();
-
-    /**
      * Routes visible to a user whose JWT carries any of the
      * given role ids. The {@code /myMenu} endpoint uses this
      * to compute the per-user sidebar in one round-trip.
@@ -73,17 +56,11 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
      *       ad-hoc per-route grants.</li>
      * </ol>
      *
-     * <p><b>Source of truth is {@code app_route}, not the
-     * {@code id_app} FK on {@code Route}.</b> {@code Route.app}
-     * ({@code id_app}) is a separate, unrelated "primary app"
-     * pointer used only for the CRUD response shape's
-     * {@code appId}/{@code appName} fields — it is intentionally
-     * NOT consulted here. Binding/unbinding a route to an app via
-     * {@code AppService.bindRoute}/{@code unbindRoute} (the App
-     * edit page's route picker) mutates {@code app_route}
-     * exclusively; this query must read from the same table or
-     * an unbind action would silently fail to remove the route
-     * from the app's effective menu.
+     * <p><b>Source of truth is {@code app_route}</b> — the M:N
+     * that {@code AppService.bindRoute}/{@code unbindRoute} (the
+     * App edit page's route picker) exclusively mutate. {@code Route}
+     * has no "primary app" FK; {@code app_route} membership is the
+     * only relationship between a route and its app(s).
      *
      * <p>Spring Data binds {@code :roleIds} as a Postgres
      * {@code BIGINT[]} via the JPQL {@code IN} clause. The
@@ -95,15 +72,9 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
      * {@code ID_ROUTE} ASC — gives a stable order across
      * requests when two routes share the same
      * {@code menuOrder}.
-     *
-     * <p>Eager fetch of {@code app} — the response shape
-     * includes {@code appId}/{@code appName} (from the separate
-     * {@code id_app} FK, see above) and we don't want N+1 on a
-     * list endpoint.
      */
     @Query("""
             SELECT DISTINCT r FROM Route r
-            LEFT JOIN FETCH r.app
             WHERE r.id IN (
                 SELECT r2.id FROM App a2 JOIN a2.routes r2 JOIN a2.roles rol2
                  WHERE rol2.id IN :roleIds
@@ -137,13 +108,8 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
      * "visible to caller's roles" AND "is a member (via
      * app_route) of the requested app".
      *
-     * <p>Same {@code LEFT JOIN FETCH r.app} + ordering as the
-     * un-scoped overload — the response shape is unchanged (and,
-     * as noted above, {@code appId}/{@code appName} in that
-     * response reflect the separate {@code id_app} "primary app"
-     * pointer, not {@code app_route} membership — a route can
-     * belong to more than one app via {@code app_route}, so no
-     * single {@code appId} could represent that here).
+     * <p>Same ordering as the un-scoped overload — the response
+     * shape is unchanged.
      *
      * <p>Returns empty (not an error) when the caller's roles
      * don't intersect the app's route set; the endpoint surfaces
@@ -152,7 +118,6 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
      */
     @Query("""
             SELECT DISTINCT r FROM Route r
-            LEFT JOIN FETCH r.app
             WHERE r.id IN (
                 SELECT r2.id FROM App a2 JOIN a2.routes r2 JOIN a2.roles rol2
                  WHERE rol2.id IN :roleIds
