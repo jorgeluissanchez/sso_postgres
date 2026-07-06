@@ -10,9 +10,20 @@ import { z } from "zod";
  * gateway-relative prefix; the gateway's WebFlux router forwards
  * /api/** to the appropriate downstream (auth-center for /api/auth/**,
  * sso-admin for /api/sso-admin/**, etc.).
+ *
+ * VITE_APP_NAME is OPTIONAL. When set, it scopes the SPA's
+ * sidebar to a single {@code App} on the backend: the SPA appends
+ * {@code ?app=<name>} to {@code GET /sso-admin/myMenu} so the
+ * backend filters routes to that app's bundle. When unset, the
+ * SPA calls {@code /myMenu} without a filter and gets the full
+ * union across every app the caller's roles grant (the
+ * pre-scoping behavior). Either is a legitimate build — the
+ * optional field keeps CI envs that haven't migrated from
+ * crashing at startup.
  */
 const envSchema = z.object({
   VITE_API_BASE: z.string().min(1).startsWith("/"),
+  VITE_APP_NAME: z.string().min(1).optional(),
 });
 
 const parsed = envSchema.safeParse(import.meta.env);
