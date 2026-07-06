@@ -245,11 +245,11 @@ export interface EndpointMicroserviceChecked {
 
 /**
  * Wire shape for a `Route` row. Mirrors the backend
- * {@code com.co.eurekatic.ssoadmin.dto.RouteResponse} record
- * (full field list). The SPA-side TypeScript was missing
- * {@code appId} and {@code appName} — added so the dynamic
- * sidebar and any future per-app rendering can read them
- * without losing type safety.
+ * {@code com.co.eurekatic.ssoadmin.dto.RouteResponse} record.
+ * No `appId`/`appName` field — a route's app membership is the
+ * `app_route` M:N (a route can belong to more than one app),
+ * managed via the App edit page's route picker
+ * (`appsApi.bindRoute`/`unbindRoute`), not a single FK on Route.
  *
  * <p>{@code idParent} is {@code null} for roots. Legacy data
  * may carry {@code 0} as the root sentinel; the
@@ -258,8 +258,8 @@ export interface EndpointMicroserviceChecked {
  * <p>{@code roleIds} is the set of role ids this Route is
  * directly bound to (the {@code ROLE_ROUTE} join table).
  * Per-row authorization for {@code GET /sso-admin/myMenu}
- * uses BOTH this direct binding AND the route's
- * {@code app->roles} chain — see
+ * uses BOTH this direct binding AND the route's app_route
+ * membership → app's {@code role_app} chain — see
  * {@code RouteRepository.findVisibleForRoles}.
  */
 export interface RouteResponse {
@@ -270,8 +270,6 @@ export interface RouteResponse {
   menuOrder: number;
   type: string;
   idParent: number | null;
-  appId: number | null;
-  appName: string | null;
   roleIds: number[];
 }
 
@@ -283,7 +281,6 @@ export interface RouteRequest {
   menuOrder: number;
   type: string;
   idParent: number | null;
-  appId?: number | null;
 }
 
 export interface RouteRoleChecked {
