@@ -14,7 +14,7 @@
 # direct ROLE_ROUTE branch; the other seeds the App-grant
 # branch).
 #
-# 6 checks:
+# 10 checks:
 #   1. /myMenu returns 200 for a logged-in admin.
 #   2. /myMenu returns >= 12 routes (the twelve the SPA
 #      expects to see, per the seed scripts).
@@ -32,6 +32,28 @@
 #      app_route (and at least one of them has id_app
 #      set to the SSO-ADMIN app — the second join
 #      leg).
+#   7. /myMenu?app=SSO-ADMIN returns >= 12 routes —
+#      pins the new app-scoped overload of
+#      RouteRepository.findVisibleForRoles(roleIds,
+#      appId). SSO-ADMIN is the canonical name seeded
+#      by 09-seed-sso-admin-app.sh.
+#   8. /myMenu?app=Nonexistent returns 200 + 0 routes —
+#      pins the "unknown app -> 200 + []" contract from
+#      MyMenuService.forCaller(auth, appName). Catches
+#      a regression where someone might short-circuit
+#      unknown names to a 404 (which would break the
+#      SPA's render path).
+#   9. /myMenu?app= (blank) returns 200 + 0 routes —
+#      the controller's trim() normalizes blank to "no
+#      filter" semantics; this check pins that a
+#      literal empty value is handled the same as null
+#      instead of being passed through to the DB layer
+#      with bogus semantics.
+#  10. /myMenu without ?app= still returns the full
+#      union (>= 12 routes for ADMIN) — pins the
+#      backwards-compat path so legacy clients (smoke
+#      scripts, multi-tenant menu editors) keep
+#      getting the same answer they always did.
 #
 # Negative path (NOT covered here): a non-admin user
 # with role bindings sees only the bound subset. That's a
@@ -195,6 +217,135 @@ if [ "$ROUTE_FKED_COUNT" -ge 12 ] 2>/dev/null; then
 else
   bad "ROUTE.id_app points $ROUTE_FKED_COUNT routes at SSO-ADMIN (expected >= 12)"
 fi
+
+# ---------- 7. ?app=SSO-ADMIN returns >= 12 routes ----------
+hr
+echo ">>> 7. GET /sso-admin/myMenu?app=SSO-ADMIN returns >= 12 routes"
+
+APP_HTTP=$(curl -sS -o /tmp/mymenu-app-body.$$ -w '%{http_code}' \
+  -H "Authorization: Bearer $ACCESS_JWT" \
+  "$GATEWAY/sso-admin/myMenu?app=SSO-ADMIN")
+if [ "$APP_HTTP" = "200" ]; then
+  ok "?app=SSO-ADMIN returns 200"
+else
+  bad "?app=SSO-ADMIN expected 200, got $APP_HTTP"
+  cat /tmp/mymenu-app-body.$$ || true
+fi
+
+APP_COUNT=$(python3 -c "import json; print(len(json.load(open('/tmp/mymenu-app-body.$$'))))")
+if [ "$APP_COUNT" -ge 12 ]; then
+  ok "?app=SSO-ADMIN body has $APP_COUNT routes (>= 12)"
+else
+  bad "?app=SSO-ADMIN expected >= 12 routes, got $APP_COUNT"
+  cat /tmp/mymenu-app-body.$$ || true
+fi
+
+# Pin one specific path as a regression catch — the legacy
+# /admin/users route is bound to ColombiaEvaluadora only
+# (pre-existing manual binding), so it MUST NOT appear when
+# the SPA scope is SSO-ADMIN. If it does, the JPQL app.id
+# filter on the fine-grained branch regressed.
+APP_BODY=$(cat /tmp/mymenu-app-body.$$)
+if echo "$APP_BODY" | grep -q '"/admin/users"'; then
+  bad "?app=SSO-ADMIN leaks the ColombiaEvaluadora-only /admin/users route (fine-grained branch regressed)"
+else
+  ok "?app=SSO-ADMIN correctly excludes /admin/users (ColombiaEvaluadora-only route)"
+fi
+rm -f /tmp/mymenu-app-body.$$
+
+# ---------- 8. ?app=Nonexistent returns 0 routes ----------
+hr
+echo ">>> 8. GET /sso-admin/myMenu?app=Nonexistent returns 0 routes"
+
+UNK_HTTP=$(curl -sS -o /tmp/mymenu-unk-body.$$ -w '%{http_code}' \
+  -H "Authorization: Bearer $ACCESS_JWT" \
+  "$GATEWAY/sso-admin/myMenu?app=Nonexistent")
+if [ "$UNK_HTTP" = "200" ]; then
+  ok "?app=Nonexistent returns 200 (not 404)"
+else
+  bad "?app=Nonexistent expected 200, got $UNK_HTTP"
+  cat /tmp/mymenu-unk-body.$$ || true
+fi
+
+UNK_COUNT=$(python3 -c "import json; print(len(json.load(open('/tmp/mymenu-unk-body.$$'))))")
+if [ "$UNK_COUNT" = "0" ]; then
+  ok "?app=Nonexistent body has 0 routes (200 + [])"
+else
+  bad "?app=Nonexistent expected 0 routes, got $UNK_COUNT"
+  cat /tmp/mymenu-unk-body.$$ || true
+fi
+rm -f /tmp/mymenu-unk-body.$$
+
+# ---------- 9. /myMenu (no ?app=) still returns the full union ----------
+hr
+echo ">>> 9. GET /sso-admin/myMenu (no ?app=) returns the full union (back-compat)"
+
+# This is the same call as check #2 but re-issued with the
+# no-query-string shape (not URL-encoded) so a future
+# regression that forces `?app=` somewhere in the middleware
+# chain shows up here even if the JSON body still parses.
+NC_HTTP=$(curl -sS -o /tmp/mymenu-nc-body.$$ -w '%{http_code}' \
+  -H "Authorization: Bearer $ACCESS_JWT" \
+  "$GATEWAY/sso-admin/myMenu")
+if [ "$NC_HTTP" = "200" ]; then
+  ok "no-?app= returns 200"
+else
+  bad "no-?app= expected 200, got $NC_HTTP"
+fi
+
+NC_COUNT=$(python3 -c "import json; print(len(json.load(open('/tmp/mymenu-nc-body.$$'))))")
+if [ "$NC_COUNT" -ge 12 ]; then
+  ok "no-?app= body has $NC_COUNT routes (>= 12; back-compat preserved)"
+else
+  bad "no-?app= expected >= 12 routes (union), got $NC_COUNT"
+fi
+rm -f /tmp/mymenu-nc-body.$$
+
+# ---------- 10. ?app= (blank) is treated as no filter ----------
+hr
+echo ">>> 10. GET /sso-admin/myMenu?app= (blank) returns the full union (same as no param)"
+
+# Empty-value query params (?app=) are degenerate; the
+# controller's trim() collapses "" + null into the same
+# branch which falls through to MyMenuService.forCaller(auth)
+# (the 1-arg overload) — i.e. the full union, not the scoped
+# one. This matches the documented contract "blank ?app= is
+# treated the same as omitted; some HTTP clients send
+# ?app=&foo=bar and we want to ignore them" from the plan.
+# The earlier check #8 (?app=Nonexistent) already pins the
+# LEGITIMATELY-unknown-name path (200 + []); this check pins
+# the BLANK fallback to the no-filter union instead.
+#
+# Run AFTER check #9 so NC_COUNT is defined for the
+# equality assertion below (the script uses `set -u` which
+# rejects unbound variable references).
+BLANK_HTTP=$(curl -sS -o /tmp/mymenu-blank-body.$$ -w '%{http_code}' \
+  -H "Authorization: Bearer $ACCESS_JWT" \
+  "$GATEWAY/sso-admin/myMenu?app=")
+if [ "$BLANK_HTTP" = "200" ]; then
+  ok "?app= (blank) returns 200"
+else
+  bad "?app= (blank) expected 200, got $BLANK_HTTP"
+fi
+
+BLANK_COUNT=$(python3 -c "import json; print(len(json.load(open('/tmp/mymenu-blank-body.$$'))))")
+if [ "$BLANK_COUNT" -ge 12 ]; then
+  ok "?app= (blank) body has $BLANK_COUNT routes (>= 12; collapsed to no-filter union)"
+else
+  bad "?app= (blank) expected >= 12 routes (no-filter union), got $BLANK_COUNT"
+fi
+
+# Regression catch — blank must return the SAME count as
+# the explicit no-param call. If a future change accidentally
+# sends blank into the scoped branch, BLANK_COUNT would jump
+# to 12 (different from no-param's 13) and this comparison
+# fails.
+if [ "$BLANK_COUNT" = "$NC_COUNT" ]; then
+  ok "?app= (blank) count matches no-?app= count ($BLANK_COUNT == $NC_COUNT)"
+else
+  bad "?app= (blank) count ($BLANK_COUNT) differs from no-?app= count ($NC_COUNT) — blank is not collapsed to no-filter"
+fi
+rm -f /tmp/mymenu-blank-body.$$
 
 # ---------- summary ----------
 hr
