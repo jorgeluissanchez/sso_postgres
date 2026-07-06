@@ -16,6 +16,15 @@
 FROM node:20-alpine AS node-spa
 WORKDIR /spa
 
+# VITE_APP_NAME scopes the SPA's sidebar to one App on the
+# backend (the menuApi.getMyMenu wrapper forwards it as
+# ?app=<name> on GET /sso-admin/myMenu). Default to empty so
+# an unset value leaves the SPA un-scoped — keeps dev/CI
+# builds working without a value, while production deploys
+# set it via docker-compose.yml build.args.
+ARG VITE_APP_NAME=""
+ENV VITE_APP_NAME=$VITE_APP_NAME
+
 # Copy manifests first so dependency install is cached when only the
 # source changes. The lockfile is committed at admin-ui/.
 COPY admin-ui/package.json admin-ui/package-lock.json ./
