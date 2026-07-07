@@ -30,8 +30,8 @@ RUN mvn -B -ntp -pl query-service -am clean package -DskipTests -q
 FROM eclipse-temurin:25-jre-jammy
 WORKDIR /app
 
-RUN groupadd --system --gid 1000 app && \
-    useradd  --system --uid 1000 --gid app --home /app app
+RUN groupadd --system --gid 10001 app && \
+    useradd  --system --uid 10001 --gid app --home /app app
 
 COPY --from=build --chown=app:app /workspace/query-service/target/query-service.jar /app/app.jar
 
