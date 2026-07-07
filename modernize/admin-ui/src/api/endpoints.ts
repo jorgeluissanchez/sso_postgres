@@ -23,6 +23,7 @@ import type {
   EndpointRoleChecked,
   GroupRequest,
   GroupResponse,
+  GroupRoleChecked,
   LoginRequest,
   MicroserviceRequest,
   MicroserviceResponse,
@@ -94,6 +95,14 @@ export const groupsApi = {
   save: (body: GroupRequest) => apiClient.post<GroupResponse>("/sso-admin/group", body),
   bindUser: (userId: number, groupId: number) =>
     apiClient.post<void>("/sso-admin/group/bindUserGroup", { userId, groupId }),
+
+  /* ============== role family ============== */
+  bindRole: (id: number, roleId: number) =>
+    apiClient.post<void>(`/sso-admin/group/${id}/role/${roleId}`),
+  unbindRole: (id: number, roleId: number) =>
+    apiClient.delete<void>(`/sso-admin/group/${id}/role/${roleId}`),
+  getRolesChecked: (id: number) =>
+    apiClient.get<GroupRoleChecked[]>(`/sso-admin/group/${id}/roles/checked`),
 };
 
 // ====================== microservice ======================
