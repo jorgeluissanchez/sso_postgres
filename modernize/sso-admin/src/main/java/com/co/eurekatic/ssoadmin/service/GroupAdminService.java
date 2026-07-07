@@ -1,8 +1,10 @@
 package com.co.eurekatic.ssoadmin.service;
 
 import com.co.eurekatic.common.entity.Group;
+import com.co.eurekatic.common.entity.Role;
 import com.co.eurekatic.common.entity.User;
 import com.co.eurekatic.common.repository.GroupRepository;
+import com.co.eurekatic.common.repository.RoleRepository;
 import com.co.eurekatic.common.repository.UserRepository;
 import com.co.eurekatic.ssoadmin.dto.GroupRequest;
 import com.co.eurekatic.ssoadmin.dto.GroupResponse;
@@ -11,6 +13,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Group CRUD and user↔group bindings. The legacy
@@ -24,11 +28,14 @@ public class GroupAdminService {
 
     private final GroupRepository groupRepository;
     private final UserRepository userRepository;
+    private final RoleRepository roleRepository;
 
     public GroupAdminService(GroupRepository groupRepository,
-                             UserRepository userRepository) {
+                             UserRepository userRepository,
+                             RoleRepository roleRepository) {
         this.groupRepository = groupRepository;
         this.userRepository = userRepository;
+        this.roleRepository = roleRepository;
     }
 
     /**
@@ -67,4 +74,40 @@ public class GroupAdminService {
         group.addUser(user);
         groupRepository.save(group);
     }
+
+    /* ====================== bindings: role ====================== */
+
+    @Transactional
+    public void bindRole(Long groupId, Long roleId) {
+        Group group = groupRepository.findById(groupId)
+                .orElseThrow(() -> new NotFoundException("Group", groupId));
+        Role role = roleRepository.findById(roleId)
+                .orElseThrow(() -> new NotFoundException("Role", roleId));
+        group.addRole(role);
+        groupRepository.save(group);
+    }
+
+    @Transactional
+    public void unbindRole(Long groupId, Long roleId) {
+        Group group = groupRepository.findById(groupId)
+                .orElseThrow(() -> new NotFoundException("Group", groupId));
+        Role role = roleRepository.findById(roleId)
+                .orElseThrow(() -> new NotFoundException("Role", roleId));
+        group.removeRole(role);
+        groupRepository.save(group);
+    }
+
+    @Transactional(readOnly = true)
+    public List<RoleChecked> getRolesForGroupChecked(Long groupId) {
+        Group group = groupRepository.findById(groupId)
+                .orElseThrow(() -> new NotFoundException("Group", groupId));
+        Set<Long> bound = group.getRoles().stream()
+                .map(Role::getId)
+                .collect(Collectors.toSet());
+        return roleRepository.findAll().stream()
+                .map(r -> new RoleChecked(r.getId(), r.getName(), bound.contains(r.getId())))
+                .toList();
+    }
+
+    public record RoleChecked(Long roleId, String name, boolean checked) {}
 }
