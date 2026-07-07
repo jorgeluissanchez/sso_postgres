@@ -1,57 +1,32 @@
 # =====================================================================
 # Grafana Tempo — traces backend, monolithic single-binary mode with
-# local filesystem storage. Fine for a Docker Compose dev stack; swap
-# `storage.trace.backend` to s3/gcs for production HA.
+# local filesystem storage. Minimal config accepted by the current
+# grafana/tempo image (its strict parser rejects the ingester/
+# compactor/metrics_generator tuning blocks, so we rely on defaults).
+#
+# Follow-up: the span-metrics / service-graph generator (which
+# remote_writes RED metrics to Mimir) can be re-added once pinned to a
+# Tempo version whose overrides schema is confirmed. Traces work fully
+# without it.
 # =====================================================================
 stream_over_http_enabled: true
 
 server:
   http_listen_port: 3200
 
-# Anonymous usage reporting off — dev stack, no phone-home.
-usage_report:
-  reporting_enabled: false
-
 distributor:
   receivers:
     otlp:
       protocols:
         grpc:
-          endpoint: 0.0.0.0:4317
+          endpoint: "0.0.0.0:4317"
         http:
-          endpoint: 0.0.0.0:4318
-
-ingester:
-  max_block_duration: 5m
-
-compactor:
-  compaction:
-    block_retention: 24h   # dev retention; raise for prod
-
-# metrics_generator turns spans into RED metrics + a service graph,
-# which it remote_writes to Mimir. This is what powers Grafana's
-# "Service Graph" and span-rate panels.
-metrics_generator:
-  registry:
-    external_labels:
-      source: tempo
-  storage:
-    path: /var/tempo/generator/wal
-    remote_write:
-      - url: http://mimir:9009/api/v1/push
-        send_exemplars: true
-  traces_storage:
-    path: /var/tempo/generator/traces
+          endpoint: "0.0.0.0:4318"
 
 storage:
   trace:
     backend: local
-    local:
-      path: /var/tempo/blocks
     wal:
       path: /var/tempo/wal
-
-overrides:
-  defaults:
-    metrics_generator:
-      processors: [service-graphs, span-metrics]
+    local:
+      path: /var/tempo/blocks

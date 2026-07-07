@@ -19,7 +19,10 @@ common:
   storage:
     backend: filesystem
     filesystem:
-      dir: /data/mimir
+      # Must NOT be a parent of blocks_storage.tsdb.dir below — Mimir
+      # rejects overlapping/nested storage paths. Keep the object-storage
+      # bucket and the local tsdb as siblings under /data/mimir.
+      dir: /data/mimir/blocks
 
 blocks_storage:
   tsdb:
