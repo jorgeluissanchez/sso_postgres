@@ -38,6 +38,19 @@ spring:
           # registered with Eureka, lowercased service id as the path.
           # Static routes take precedence when ids collide.
           routes:
+            # Bare root "/" → 302 redirect to the admin SPA. Without
+            # this, hitting http://localhost:8080/ falls through to
+            # deny-by-default and returns a raw 401 error page. The SPA
+            # is served at /admin/** (AdminUiGlobalFilter); once it
+            # loads, RequireAuth client-side-redirects to the login
+            # form. The `uri` is a required placeholder — RedirectTo
+            # short-circuits the exchange before any forwarding.
+            - id: root-redirect
+              uri: "no://op"
+              predicates:
+                - Path=/
+              filters:
+                - RedirectTo=302, /admin/
             - id: auth-center
               uri: lb://auth-center
               predicates:
