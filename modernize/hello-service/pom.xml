@@ -49,6 +49,17 @@
             and the network path is locked down. The gateway is the
             trust boundary.
         -->
+
+        <!-- @WebFluxTest slice. Spring Boot 4.0 modularized the test
+             slices out of spring-boot-test-autoconfigure into per-tech
+             modules, and this one is NOT transitive of
+             spring-boot-starter-test, so declare it explicitly.
+             Version managed by the Spring Boot BOM. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webflux-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
