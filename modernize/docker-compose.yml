@@ -74,10 +74,10 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      # Init scripts run once on first startup (the official
-      # postgres image runs /docker-entrypoint-initdb.d/*.sh
-      # before opening the cluster to the network).
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      # NOTE: the schema is NO LONGER created by docker-entrypoint-initdb.d
+      # shell scripts. The `flyway` service below owns all DDL as versioned
+      # migrations under ./postgres/migrations (V1__..V7__). The postgres
+      # image still creates the empty `sso` database via POSTGRES_DB.
     healthcheck:
       # pg_isready returns 0 when the cluster is accepting
       # connections, 3 when starting up, 1 on error.
@@ -86,6 +86,45 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
+
+  # ===========================================================================
+  # flyway — one-shot schema migrator. Runs `migrate` against the `sso`
+  # database and EXITS (it is not a long-running service). Every Spring
+  # service that talks to the sso schema depends on this completing
+  # successfully, so the schema is guaranteed present + at the expected
+  # version before any app boots (all of them run ddl-auto=validate).
+  #
+  # This replaces the old postgres/init/*.sh scripts. Migrations live in
+  # ./postgres/migrations (V1__..V7__) and are the single source of
+  # truth for the schema. To add schema, drop a new V<n>__name.sql file
+  # and re-run `docker compose up flyway`.
+  #
+  # Rollback note: Flyway Community is forward-only (the `undo` command
+  # is a paid Teams feature). "Rolling back" here means writing a new
+  # forward migration (e.g. V8__drop_x.sql), which is the recommended
+  # practice for shared/production schemas anyway.
+  # ===========================================================================
+  flyway:
+    image: flyway/flyway:11-alpine
+    container_name: sso-flyway
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["-connectRetries=60", "migrate"]
+    environment:
+      FLYWAY_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
+      FLYWAY_USER: ${POSTGRES_USER}
+      FLYWAY_PASSWORD: ${POSTGRES_PASSWORD}
+      FLYWAY_DEFAULT_SCHEMA: public
+      # Baseline an already-populated schema (e.g. an existing dev volume
+      # created by the old .sh scripts) at version 0 so V1..V7 still run;
+      # every migration is IF-NOT-EXISTS guarded, so re-applying is a
+      # no-op. On a fresh DB this is inert and all migrations run.
+      FLYWAY_BASELINE_ON_MIGRATE: "true"
+      FLYWAY_BASELINE_VERSION: "0"
+    volumes:
+      - ./postgres/migrations:/flyway/sql:ro
+    restart: "no"
 
   eurekaserver:
     build:
@@ -156,6 +195,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      flyway:
+        # Schema must be migrated before auth-center runs ddl-auto=validate
+        # and DataInitializer seeds the admin user into users/role.
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       eurekaserver:
@@ -265,6 +308,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      flyway:
+        # Schema (groups/microservice/endpoint/route/app/query/write)
+        # must exist before sso-admin's ddl-auto=validate runs.
+        condition: service_completed_successfully
       eurekaserver:
         condition: service_started
       provisioner:
