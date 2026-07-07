@@ -146,7 +146,7 @@ services:
       EUREKA_CLIENT_REGISTER_WITH_EUREKA: "false"
       EUREKA_CLIENT_FETCH_REGISTRY: "false"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8761/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8761; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -225,7 +225,7 @@ services:
       SSO_ADMIN_PASSWORD: ${SSO_ADMIN_PASSWORD}
       SSO_ADMIN_EMAIL: ${SSO_ADMIN_EMAIL}
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8081/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8081; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -259,7 +259,7 @@ services:
       # public hostname(s).
       SSO_CORS_ALLOWED_ORIGINS: ${SSO_CORS_ALLOWED_ORIGINS:-http://localhost:8080,http://localhost:5173}
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8080; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -285,7 +285,7 @@ services:
     # actuator/health is the canonical signal, and the service
     # itself doesn't expose /actuator/health to the public.
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8082/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8082; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -356,7 +356,7 @@ services:
       SSO_ACTIVATION_URL: "http://localhost:${API_GATEWAY_PORT:-8080}/admin/activate"
       SSO_RESTORE_URL: "http://localhost:${API_GATEWAY_PORT:-8080}/admin/restore-password"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8083/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8083; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -437,7 +437,7 @@ services:
       # the literal /getQuery path resolves them.
       QUERY_CATALOG_BASE_URL: "http://sso-api-gateway:8080/sso-admin"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8084/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8084; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -477,7 +477,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       QUERY_CATALOG_BASE_URL: "http://sso-api-gateway:8080/sso-admin"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8084/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8084; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
       timeout: 5s
       retries: 12
