@@ -117,6 +117,12 @@ class SsoAdminIntegrationTest {
     @MockitoBean
     com.co.eurekatic.ssoadmin.service.EmailService emailServiceMock;
 
+    // Don't hit RabbitMQ in tests. Wire-2 wiring routes account /
+    // password flows through NotificationEventPublisher instead
+    // of EmailService — the mock receives publish() calls instead.
+    @MockitoBean
+    com.co.eurekatic.ssoadmin.event.NotificationEventPublisher notificationPublisherMock;
+
     @BeforeEach
     void setUp() {
         // Bind a WebTestClient directly to the servlet
@@ -243,8 +249,19 @@ class SsoAdminIntegrationTest {
         assertThat(stored.getPassword()).isNotEqualTo("s3cret");
         assertThat(passwordEncoder.matches("s3cret", stored.getPassword())).isTrue();
 
-        org.mockito.Mockito.verify(emailServiceMock)
-                .sendActivationEmail(any(User.class), any());
+        // Wire-2: createAccount publishes the activation event via
+        // NotificationEventPublisher → notification-service renders
+        // and sends the email. We verify the event was published;
+        // notification-service delivery is covered by its own
+        // Testcontainers suite.
+        org.mockito.Mockito.verify(notificationPublisherMock)
+                .publish(
+                        org.mockito.ArgumentMatchers.eq("email"),
+                        any(),
+                        org.mockito.ArgumentMatchers.eq("alice@example.com"),
+                        org.mockito.ArgumentMatchers.eq("account-activation"),
+                        any(),
+                        any());
     }
 
     @Test
@@ -361,8 +378,11 @@ class SsoAdminIntegrationTest {
         // Create a user directly via the repository (faster than going
         // through POST /createAccount which now mints an activation
         // token we don't need here), then trigger forgotPassword to
-        // issue a real restore token and dispatch it via the (mocked)
-        // EmailService. ArgumentCaptor pulls the token back out.
+        // issue a real restore token. Wire-2: the flow now publishes
+        // a NotificationMessage event (notification-service renders
+        // and sends the email); the token rides in the payload's
+        // resetLink query string. We extract it back out via the
+        // captor.
         User u = new User();
         u.setUsername("carol");
         u.setEmail("carol@example.com");
@@ -378,11 +398,19 @@ class SsoAdminIntegrationTest {
                 .exchange()
                 .expectStatus().isOk();
 
-        org.mockito.ArgumentCaptor<String> tok = org.mockito.ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(emailServiceMock)
-                .sendRestorePasswordEmail(org.mockito.ArgumentMatchers.eq(u), tok.capture());
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<Map<String, Object>> payload =
+                org.mockito.ArgumentCaptor.forClass(Map.class);
+        org.mockito.Mockito.verify(notificationPublisherMock)
+                .publish(
+                        org.mockito.ArgumentMatchers.eq("email"),
+                        any(),
+                        org.mockito.ArgumentMatchers.eq("carol@example.com"),
+                        org.mockito.ArgumentMatchers.eq("password-reset"),
+                        payload.capture(),
+                        any());
 
-        String restoreToken = tok.getValue();
+        String restoreToken = extractToken(payload.getValue().get("resetLink").toString());
         assertThat(restoreToken).hasSize(36); // UUID format, same as TokenService
 
         // POST + JSON body — same shape as /activateAccount.
@@ -401,6 +429,17 @@ class SsoAdminIntegrationTest {
         // single-use semantics.
         assertThat(after.getTokenRestore()).isNull();
         assertThat(passwordEncoder.matches("newpass1", after.getPassword())).isTrue();
+    }
+
+    /** Pulls the {@code token=...} query string out of the
+     * {@code resetLink} URL produced by UserAdminService.forgotPassword
+     * when wrapping the restore token in the notification payload. */
+    private static String extractToken(String url) {
+        int i = url.indexOf("token=");
+        if (i < 0) throw new AssertionError("resetLink missing token= : " + url);
+        String tail = url.substring(i + "token=".length());
+        int amp = tail.indexOf('&');
+        return amp < 0 ? tail : tail.substring(0, amp);
     }
 
     @Test

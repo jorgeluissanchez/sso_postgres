@@ -4,9 +4,11 @@ import com.co.eurekatic.common.entity.Role;
 import com.co.eurekatic.common.entity.User;
 import com.co.eurekatic.common.repository.RoleRepository;
 import com.co.eurekatic.common.repository.UserRepository;
+import com.co.eurekatic.ssoadmin.config.EmailProperties;
 import com.co.eurekatic.ssoadmin.dto.CreateAccountRequest;
 import com.co.eurekatic.ssoadmin.dto.UpdateAccountRequest;
 import com.co.eurekatic.ssoadmin.dto.UserResponse;
+import com.co.eurekatic.ssoadmin.event.NotificationEventPublisher;
 import com.co.eurekatic.ssoadmin.exception.EmailInvalidException;
 import com.co.eurekatic.ssoadmin.exception.NotFoundException;
 import com.co.eurekatic.ssoadmin.exception.UserDuplicateException;
@@ -16,8 +18,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -59,17 +63,23 @@ public class UserAdminService {
     private final PasswordEncoder passwordEncoder;
     private final TokenService tokenService;
     private final EmailService emailService;
+    private final EmailProperties emailProps;
+    private final NotificationEventPublisher events;
 
     public UserAdminService(UserRepository userRepository,
                             RoleRepository roleRepository,
                             PasswordEncoder passwordEncoder,
                             TokenService tokenService,
-                            EmailService emailService) {
+                            EmailService emailService,
+                            EmailProperties emailProps,
+                            NotificationEventPublisher events) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenService = tokenService;
         this.emailService = emailService;
+        this.emailProps = emailProps;
+        this.events = events;
     }
 
     /**
@@ -109,7 +119,14 @@ public class UserAdminService {
         String token = tokenService.issueActivationToken(user);
         User saved = userRepository.save(user);
 
-        emailService.sendActivationEmail(saved, token);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("displayName", saved.getFullName() == null ? saved.getUsername() : saved.getFullName());
+        payload.put("username", saved.getUsername());
+        payload.put("activationLink", emailProps.activationUrl() + "?token=" + token);
+        payload.put("ttlMinutes", 60);
+        events.publish("email", String.valueOf(saved.getId()), saved.getEmail(),
+                "account-activation", payload, null);
+
         log.info("Created user '{}' (active=true, enabled=false, pending activation)",
                 saved.getUsername());
         return UserResponse.fromEntity(saved);
@@ -143,6 +160,10 @@ public class UserAdminService {
             Set<Role> current = user.getRoles();
             Set<String> wanted = req.roleNames().stream()
                     .collect(Collectors.toCollection(LinkedHashSet::new));
+            Set<String> removed = current.stream()
+                    .map(Role::getName)
+                    .filter(n -> !wanted.contains(n))
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
             current.removeIf(r -> !wanted.contains(r.getName()));
             for (String name : wanted) {
                 if (current.stream().noneMatch(r -> r.getName().equals(name))) {
@@ -151,9 +172,20 @@ public class UserAdminService {
                     user.addRole(role);
                 }
             }
+            // Publish role-revoked for every role removed by the
+            // replace strategy (single bulk update).
+            for (String roleName : removed) {
+                publishRoleRevoked(user, roleName);
+            }
         }
 
-        return UserResponse.fromEntity(userRepository.save(user));
+        User saved = userRepository.save(user);
+
+        if (req.active() != null && !req.active()) {
+            publishAccountDeactivated(saved, "Disabled via admin update");
+        }
+
+        return UserResponse.fromEntity(saved);
     }
 
     /**
@@ -171,8 +203,14 @@ public class UserAdminService {
         user.setPassword(passwordEncoder.encode(password));
         user.setEnabled(true);
         user.setActive(true);
-        userRepository.save(user);
-        log.info("Activated user '{}'", user.getUsername());
+        User saved = userRepository.save(user);
+        log.info("Activated user '{}'", saved.getUsername());
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("displayName", saved.getFullName() == null ? saved.getUsername() : saved.getFullName());
+        payload.put("username", saved.getUsername());
+        events.publish("email", String.valueOf(saved.getId()), saved.getEmail(),
+                "account-activated", payload, null);
     }
 
     /**
@@ -187,8 +225,14 @@ public class UserAdminService {
         }
         User user = tokenService.consumeRestoreToken(token);
         user.setPassword(passwordEncoder.encode(password));
-        userRepository.save(user);
-        log.info("Restored password for user '{}'", user.getUsername());
+        User saved = userRepository.save(user);
+        log.info("Restored password for user '{}'", saved.getUsername());
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("displayName", saved.getFullName() == null ? saved.getUsername() : saved.getFullName());
+        payload.put("username", saved.getUsername());
+        events.publish("email", String.valueOf(saved.getId()), saved.getEmail(),
+                "password-changed", payload, null);
     }
 
     /**
@@ -204,7 +248,14 @@ public class UserAdminService {
                 .ifPresent(u -> {
                     String token = tokenService.issueRestoreToken(u);
                     userRepository.save(u);
-                    emailService.sendRestorePasswordEmail(u, token);
+
+                    Map<String, Object> payload = new LinkedHashMap<>();
+                    payload.put("displayName", u.getFullName() == null ? u.getUsername() : u.getFullName());
+                    payload.put("username", u.getUsername());
+                    payload.put("resetLink", emailProps.restoreUrl() + "?token=" + token);
+                    payload.put("ttlMinutes", 30);
+                    events.publish("email", String.valueOf(u.getId()), u.getEmail(),
+                            "password-reset", payload, null);
                 });
     }
 
@@ -244,8 +295,12 @@ public class UserAdminService {
                 .orElseThrow(() -> new NotFoundException("User", userId));
         Role role = roleRepository.findById(roleId)
                 .orElseThrow(() -> new NotFoundException("Role", roleId));
+        boolean alreadyBound = user.getRoles().stream().anyMatch(r -> r.getId().equals(roleId));
         user.addRole(role);
-        userRepository.save(user);
+        User saved = userRepository.save(user);
+        if (!alreadyBound) {
+            publishRoleAssigned(saved, role.getName());
+        }
     }
 
     /**
@@ -256,11 +311,19 @@ public class UserAdminService {
     public void unbindUserRole(Long userId, Long roleId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new NotFoundException("User", userId));
+        String removedRoleName = user.getRoles().stream()
+                .filter(r -> r.getId().equals(roleId))
+                .findFirst()
+                .map(Role::getName)
+                .orElse(null);
         user.getRoles().stream()
                 .filter(r -> r.getId().equals(roleId))
                 .findFirst()
                 .ifPresent(user::removeRole);
-        userRepository.save(user);
+        User saved = userRepository.save(user);
+        if (removedRoleName != null) {
+            publishRoleRevoked(saved, removedRoleName);
+        }
     }
 
     /**
@@ -284,5 +347,34 @@ public class UserAdminService {
             result.add(role);
         }
         return result;
+    }
+
+    // ---- notification helpers -------------------------------------
+
+    private void publishRoleAssigned(User user, String roleName) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("displayName", user.getFullName() == null ? user.getUsername() : user.getFullName());
+        payload.put("username", user.getUsername());
+        payload.put("roleName", roleName);
+        events.publish("email", String.valueOf(user.getId()), user.getEmail(),
+                "role-assigned", payload, null);
+    }
+
+    private void publishRoleRevoked(User user, String roleName) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("displayName", user.getFullName() == null ? user.getUsername() : user.getFullName());
+        payload.put("username", user.getUsername());
+        payload.put("roleName", roleName);
+        events.publish("email", String.valueOf(user.getId()), user.getEmail(),
+                "role-revoked", payload, null);
+    }
+
+    private void publishAccountDeactivated(User user, String reason) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("displayName", user.getFullName() == null ? user.getUsername() : user.getFullName());
+        payload.put("username", user.getUsername());
+        payload.put("reason", reason);
+        events.publish("email", String.valueOf(user.getId()), user.getEmail(),
+                "account-deactivated", payload, null);
     }
 }

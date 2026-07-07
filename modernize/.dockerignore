@@ -8,6 +8,7 @@
 !auth-center/target/auth-center.jar
 !sso-admin/target/sso-admin.jar
 !query-service/target/query-service.jar
+!notification-service/target/notification-service.jar
 **/.idea/
 **/*.iml
 **/.vscode/

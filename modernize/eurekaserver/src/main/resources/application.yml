@@ -28,7 +28,7 @@ management:
     web:
       exposure:
         # Lock down to health/info only — never expose /env, /heapdump, etc.
-        include: health,info
+        include: health,info,prometheus
   endpoint:
     health:
       probes:

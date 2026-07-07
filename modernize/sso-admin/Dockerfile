@@ -24,6 +24,7 @@ COPY hello-service/pom.xml hello-service/
 COPY sso-admin/pom.xml sso-admin/
 COPY query-service/pom.xml query-service/
 COPY provisioner/pom.xml provisioner/
+COPY notification-service/pom.xml notification-service/
 
 RUN mvn -B -ntp -pl sso-admin -am dependency:go-offline -q
 
