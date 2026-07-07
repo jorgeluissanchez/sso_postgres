@@ -19,17 +19,14 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
-import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.web.authentication.AbstractAuthenticationProcessingFilter;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 
 import java.io.IOException;
 import java.time.Instant;
-import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 /**
  * Servlet filter that handles {@code POST /login} by reading a JSON body,
@@ -53,12 +50,14 @@ public class JsonLoginFilter extends AbstractAuthenticationProcessingFilter {
     private final ObjectMapper mapper;
     private final JwtProperties props;
     private final RefreshTokenStore refreshTokenStore;
+    private final EffectiveRolesResolver effectiveRoles;
 
     public JsonLoginFilter(AuthenticationManager authenticationManager,
                            JwtTokenService jwt,
                            ObjectMapper mapper,
                            JwtProperties props,
-                           RefreshTokenStore refreshTokenStore) {
+                           RefreshTokenStore refreshTokenStore,
+                           EffectiveRolesResolver effectiveRoles) {
         // Spring Security 7 migration: AntPathRequestMatcher (from
         // spring-security-web 6.x) was removed. The replacement is
         // PathPatternRequestMatcher, built from Spring's PathPatternParser
@@ -72,6 +71,7 @@ public class JsonLoginFilter extends AbstractAuthenticationProcessingFilter {
         this.mapper = mapper;
         this.props = props;
         this.refreshTokenStore = refreshTokenStore;
+        this.effectiveRoles = effectiveRoles;
         // We are stateless; do not create or persist HttpSession-bound
         // security contexts across requests.
         setSecurityContextRepository(new org.springframework.security.web.context.NullSecurityContextRepository());
@@ -104,9 +104,7 @@ public class JsonLoginFilter extends AbstractAuthenticationProcessingFilter {
         String userId = (principal instanceof User u && u.getId() != null)
                 ? String.valueOf(u.getId())
                 : username;
-        Set<String> roles = authResult.getAuthorities().stream()
-                .map(GrantedAuthority::getAuthority)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<String> roles = effectiveRoles.forUsername(username);
 
         String accessToken = jwt.issueAccessToken(username, roles);
 

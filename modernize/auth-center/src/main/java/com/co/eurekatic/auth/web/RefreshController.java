@@ -1,5 +1,6 @@
 package com.co.eurekatic.auth.web;
 
+import com.co.eurekatic.auth.security.EffectiveRolesResolver;
 import com.co.eurekatic.auth.security.JsonLoginFilter;
 import com.co.eurekatic.common.dto.AuthDtos.TokenResponse;
 import com.co.eurekatic.common.entity.User;
@@ -19,10 +20,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Cookie-based token refresh + logout. The
@@ -53,15 +52,18 @@ public class RefreshController {
     private final UserRepository userRepository;
     private final JwtTokenService jwt;
     private final JwtProperties props;
+    private final EffectiveRolesResolver effectiveRoles;
 
     public RefreshController(RefreshTokenStore refreshTokenStore,
                               UserRepository userRepository,
                               JwtTokenService jwt,
-                              JwtProperties props) {
+                              JwtProperties props,
+                              EffectiveRolesResolver effectiveRoles) {
         this.refreshTokenStore = refreshTokenStore;
         this.userRepository = userRepository;
         this.jwt = jwt;
         this.props = props;
+        this.effectiveRoles = effectiveRoles;
     }
 
     /**
@@ -151,9 +153,7 @@ public class RefreshController {
                     .body(Map.of("error", "user_not_found"));
         }
 
-        Set<String> roles = user.getRoles().stream()
-                .map(r -> r.getName())
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<String> roles = effectiveRoles.forUsername(user.getUsername());
         String accessToken = jwt.issueAccessToken(user.getUsername(), roles);
 
         response.addHeader(HttpHeaders.SET_COOKIE,

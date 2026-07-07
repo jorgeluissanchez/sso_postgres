@@ -1,5 +1,6 @@
 package com.co.eurekatic.auth.web;
 
+import com.co.eurekatic.auth.security.EffectiveRolesResolver;
 import com.co.eurekatic.common.dto.AuthDtos.UserSummary;
 import com.co.eurekatic.common.entity.Role;
 import com.co.eurekatic.common.entity.User;
@@ -31,10 +32,13 @@ public class AuthController {
 
     private final UserRepository userRepository;
     private final JwtTokenService jwt;
+    private final EffectiveRolesResolver effectiveRoles;
 
-    public AuthController(UserRepository userRepository, JwtTokenService jwt) {
+    public AuthController(UserRepository userRepository, JwtTokenService jwt,
+                           EffectiveRolesResolver effectiveRoles) {
         this.userRepository = userRepository;
         this.jwt = jwt;
+        this.effectiveRoles = effectiveRoles;
     }
 
     /**
@@ -62,7 +66,7 @@ public class AuthController {
         if (!user.isEnabled()) {
             throw new AccessDeniedException("User is disabled");
         }
-        Set<String> roles = roleNames(user);
+        Set<String> roles = effectiveRoles.forUsername(user.getUsername());
         return ResponseEntity.ok(new com.co.eurekatic.common.dto.AuthDtos.TokenResponse(
                 jwt.issueApiToken(user.getUsername(), roles),
                 user.getApiToken(),
@@ -119,6 +123,12 @@ public class AuthController {
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
+    /**
+     * {@link UserSummary#roles()} intentionally still reflects only
+     * the user's DIRECT roles (via {@link #roleNames(User)}), not
+     * the group-effective set — this summary is a profile view, not
+     * a token-issuing path, so it's left as-is.
+     */
     private UserSummary toSummary(User u) {
         return new UserSummary(
                 u.getId(),
