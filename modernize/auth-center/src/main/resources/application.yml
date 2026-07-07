@@ -13,12 +13,13 @@ spring:
     # auth-center on the host with Postgres reachable via the
     # Docker port mapping (compose forwards
     # ${POSTGRES_PORT:-5432}:5432 to the host's loopback).
-    # For container runs the compose env block overrides this
-    # with the in-network hostname `postgres`. For a host run
-    # where Postgres lives in another container on a
-    # different bridge, set DB_URL to host.docker.internal
-    # (Docker Desktop / colima) or the container's bridge IP.
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/sso}
+    # For container runs the compose env block sets
+    # SPRING_DATASOURCE_URL with the fully-built JDBC URL
+    # (composed from DB_URL host:port + DB_NAME + DB_SSLMODE +
+    # DB_CHANNEL_BINDING), so this property is overridden at
+    # runtime. The default below is the host-mode fallback for
+    # `mvn spring-boot:run` outside compose.
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/sso}
     username: ${DB_USER:sso}
     password: ${DB_PASSWORD:change-me-in-prod}
     driver-class-name: org.postgresql.Driver
@@ -140,7 +141,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
   endpoint:
     health:
       probes:

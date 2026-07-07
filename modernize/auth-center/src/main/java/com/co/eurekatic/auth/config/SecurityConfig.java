@@ -112,8 +112,12 @@ public class SecurityConfig {
                         // with the bare role name (no ROLE_ prefix), so
                         // hasAuthority("ADMIN") is the correct check.
                         .requestMatchers("/getUsersSSO").hasAuthority("ADMIN")
+                        // /actuator/prometheus is read by the Grafana Alloy
+                        // scraper over the internal docker network. Same
+                        // rationale as /actuator/health: scrapers are
+                        // inside the trust boundary, not the public internet.
                         .requestMatchers("/actuator/health", "/actuator/health/**",
-                                "/actuator/info").permitAll()
+                                "/actuator/info", "/actuator/prometheus").permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterAt(loginFilter, UsernamePasswordAuthenticationFilter.class)

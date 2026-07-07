@@ -97,9 +97,11 @@ public class SecurityConfig {
                         // sit on equal footing under permitAll().
                         .requestMatchers("/activateAccount", "/restorePassword",
                                 "/forgotPassword").permitAll()
-                        // Health probes.
+                        // Health probes + Grafana Alloy scrape endpoint. Same trust
+                        // boundary argument: the scraper lives on the
+                        // internal docker network, not on the LAN.
                         .requestMatchers("/actuator/health", "/actuator/health/**",
-                                "/actuator/info").permitAll()
+                                "/actuator/info", "/actuator/prometheus").permitAll()
                         // Catalog read endpoints — any
                         // authenticated caller; the per-row
                         // role check happens inside the

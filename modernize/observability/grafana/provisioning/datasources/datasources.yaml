@@ -1,5 +1,5 @@
 # =====================================================================
-# Grafana datasource provisioning — wires the three LGTM backends
+# Grafana datasource provisioning — wires the four data sources
 # automatically on startup so there is zero manual clicking. Also sets
 # up cross-links: metrics<->traces (exemplars), logs<->traces (derived
 # fields), and traces<->logs/metrics (Tempo correlations).
@@ -55,3 +55,15 @@ datasources:
         datasourceUid: mimir
       nodeGraph:
         enabled: true
+  # Postgres datasource removed: the docker-compose no longer ships
+  # a local postgres. All SSO services connect to Neon cloud
+  # (see DB_URL in .env). The 12 sso_analytics views that lived in
+  # the local postgres need to be migrated to a Flyway V8 against
+  # Neon before re-adding this datasource.
+
+  # ---- Postgres: REMOVED until V8 migration lands -----------------
+  # The stack now talks to Neon (see DB_URL in .env). The 12
+  # sso_analytics views lived in the previous local `sso-postgres`
+  # container; they need to be ported to a Flyway V<n>__analytics.sql
+  # migration and applied against Neon before the Postgres
+  # datasource can be re-added here.

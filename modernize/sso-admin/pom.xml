@@ -56,6 +56,11 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <!-- Exposes /actuator/prometheus for the Grafana Alloy scraper. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
 
         <!-- Mail + Freemarker for activation and restore-password
              emails. SMTP creds come from env vars (sso.mail.*) —
