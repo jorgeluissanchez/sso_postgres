@@ -91,6 +91,11 @@ public class GatewaySecurityConfig {
                         new HttpStatusServerEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .authorizeExchange(a -> a
                         .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        // Bare root "/" is permitted so the root-redirect
+                        // gateway route (see application.yml) can 302 the
+                        // user to /admin/ instead of the security chain
+                        // 401-ing them before the redirect runs.
+                        .pathMatchers("/").permitAll()
                         .pathMatchers("/admin", "/admin/**").permitAll()
                         // Auth flow: the user has no Bearer token at this
                         // point, so the gateway must let these through

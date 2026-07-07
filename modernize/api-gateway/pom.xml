@@ -48,6 +48,33 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- Observability: pure-OTLP export of metrics, traces and logs
+             to the Grafana Alloy collector (no /actuator/prometheus scrape
+             endpoint — one protocol for everything).
+
+               micrometer-registry-otlp       -> metrics over OTLP
+               micrometer-tracing-bridge-otel -> Micrometer spans -> OTel
+               opentelemetry-exporter-otlp     -> the OTLP wire exporter
+                                                  (traces + logs)
+
+             All three are version-managed by the Spring Boot 4.0 BOM,
+             so no explicit <version> tags. The endpoint is configured
+             in application.yml via management.otlp.* and defaults to
+             ${OTEL_EXPORTER_OTLP_ENDPOINT} (set to http://alloy:4318 in
+             docker-compose). -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-otlp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+        </dependency>
+
         <!-- Reactive Spring Security 6 -->
         <dependency>
             <groupId>org.springframework.security</groupId>

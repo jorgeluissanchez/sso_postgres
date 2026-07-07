@@ -74,10 +74,10 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      # Init scripts run once on first startup (the official
-      # postgres image runs /docker-entrypoint-initdb.d/*.sh
-      # before opening the cluster to the network).
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      # NOTE: the schema is NO LONGER created by docker-entrypoint-initdb.d
+      # shell scripts. The `flyway` service below owns all DDL as versioned
+      # migrations under ./postgres/migrations (V1__..V7__). The postgres
+      # image still creates the empty `sso` database via POSTGRES_DB.
     healthcheck:
       # pg_isready returns 0 when the cluster is accepting
       # connections, 3 when starting up, 1 on error.
@@ -86,6 +86,45 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
+
+  # ===========================================================================
+  # flyway — one-shot schema migrator. Runs `migrate` against the `sso`
+  # database and EXITS (it is not a long-running service). Every Spring
+  # service that talks to the sso schema depends on this completing
+  # successfully, so the schema is guaranteed present + at the expected
+  # version before any app boots (all of them run ddl-auto=validate).
+  #
+  # This replaces the old postgres/init/*.sh scripts. Migrations live in
+  # ./postgres/migrations (V1__..V7__) and are the single source of
+  # truth for the schema. To add schema, drop a new V<n>__name.sql file
+  # and re-run `docker compose up flyway`.
+  #
+  # Rollback note: Flyway Community is forward-only (the `undo` command
+  # is a paid Teams feature). "Rolling back" here means writing a new
+  # forward migration (e.g. V8__drop_x.sql), which is the recommended
+  # practice for shared/production schemas anyway.
+  # ===========================================================================
+  flyway:
+    image: flyway/flyway:11-alpine
+    container_name: sso-flyway
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["-connectRetries=60", "migrate"]
+    environment:
+      FLYWAY_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
+      FLYWAY_USER: ${POSTGRES_USER}
+      FLYWAY_PASSWORD: ${POSTGRES_PASSWORD}
+      FLYWAY_DEFAULT_SCHEMA: public
+      # Baseline an already-populated schema (e.g. an existing dev volume
+      # created by the old .sh scripts) at version 0 so V1..V7 still run;
+      # every migration is IF-NOT-EXISTS guarded, so re-applying is a
+      # no-op. On a fresh DB this is inert and all migrations run.
+      FLYWAY_BASELINE_ON_MIGRATE: "true"
+      FLYWAY_BASELINE_VERSION: "0"
+    volumes:
+      - ./postgres/migrations:/flyway/sql:ro
+    restart: "no"
 
   eurekaserver:
     build:
@@ -107,7 +146,7 @@ services:
       EUREKA_CLIENT_REGISTER_WITH_EUREKA: "false"
       EUREKA_CLIENT_FETCH_REGISTRY: "false"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8761/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8761; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -156,6 +195,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      flyway:
+        # Schema must be migrated before auth-center runs ddl-auto=validate
+        # and DataInitializer seeds the admin user into users/role.
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       eurekaserver:
@@ -182,7 +225,7 @@ services:
       SSO_ADMIN_PASSWORD: ${SSO_ADMIN_PASSWORD}
       SSO_ADMIN_EMAIL: ${SSO_ADMIN_EMAIL}
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8081/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8081; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -215,8 +258,13 @@ services:
       # the dev compose stack. In production replace with the real
       # public hostname(s).
       SSO_CORS_ALLOWED_ORIGINS: ${SSO_CORS_ALLOWED_ORIGINS:-http://localhost:8080,http://localhost:5173}
+      # Observability: push OTLP (traces + metrics + logs) to the Alloy
+      # collector over the compose network. When the observability
+      # services are not running these exporters just log a connection
+      # warning and the gateway keeps serving — telemetry is best-effort.
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://alloy:4318"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8080; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -242,7 +290,7 @@ services:
     # actuator/health is the canonical signal, and the service
     # itself doesn't expose /actuator/health to the public.
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8082/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8082; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -265,6 +313,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      flyway:
+        # Schema (groups/microservice/endpoint/route/app/query/write)
+        # must exist before sso-admin's ddl-auto=validate runs.
+        condition: service_completed_successfully
       eurekaserver:
         condition: service_started
       provisioner:
@@ -309,7 +361,7 @@ services:
       SSO_ACTIVATION_URL: "http://localhost:${API_GATEWAY_PORT:-8080}/admin/activate"
       SSO_RESTORE_URL: "http://localhost:${API_GATEWAY_PORT:-8080}/admin/restore-password"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8083/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8083; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -390,7 +442,7 @@ services:
       # the literal /getQuery path resolves them.
       QUERY_CATALOG_BASE_URL: "http://sso-api-gateway:8080/sso-admin"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8084/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8084; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -430,7 +482,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       QUERY_CATALOG_BASE_URL: "http://sso-api-gateway:8080/sso-admin"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8084/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8084; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -510,8 +562,115 @@ services:
       retries: 12
       start_period: 20s
 
+  # ===========================================================================
+  # OBSERVABILITY — the Grafana LGTM stack + Alloy collector.
+  #
+  #   alloy    — single OTLP collector. Every Spring service pushes
+  #              OTLP to alloy:4318; the React SPA pushes Faro RUM to
+  #              alloy:12347. Fans out to Tempo / Mimir / Loki.
+  #   tempo    — traces (OTLP), monolithic + local storage.
+  #   mimir    — metrics (Prometheus-compatible), monolithic + filesystem.
+  #   loki     — logs (native OTLP ingestion), single-binary + filesystem.
+  #   grafana  — dashboards. Datasources auto-provisioned; anonymous
+  #              admin enabled for dev (http://localhost:3000).
+  #
+  # Resource note: this block adds ~2GB of RAM on top of the app
+  # stack. To run the app lean without observability, comment this
+  # block out (the gateway's OTLP exporter will no-op with a warning),
+  # or split these services into a `docker-compose.observability.yml`
+  # overlay later.
+  # ===========================================================================
+  alloy:
+    image: grafana/alloy:latest
+    container_name: sso-alloy
+    restart: unless-stopped
+    mem_limit: 300m
+    mem_reservation: 192m
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+    ports:
+      # Alloy UI (http://localhost:12345) + Faro receiver for the SPA
+      # (the browser runs on the host, so this one needs a host mapping).
+      - "127.0.0.1:12345:12345"
+      - "127.0.0.1:12347:12347"
+    depends_on:
+      - tempo
+      - mimir
+      - loki
+
+  tempo:
+    image: grafana/tempo:latest
+    container_name: sso-tempo
+    restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 256m
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+
+  mimir:
+    image: grafana/mimir:latest
+    container_name: sso-mimir
+    restart: unless-stopped
+    mem_limit: 640m
+    mem_reservation: 384m
+    command: ["-config.file=/etc/mimir/mimir.yaml"]
+    volumes:
+      - ./observability/mimir/mimir.yaml:/etc/mimir/mimir.yaml:ro
+      - mimir-data:/data/mimir
+
+  loki:
+    image: grafana/loki:latest
+    container_name: sso-loki
+    restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 256m
+    command: ["-config.file=/etc/loki/loki-config.yaml"]
+    volumes:
+      - ./observability/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki-data:/loki
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: sso-grafana
+    restart: unless-stopped
+    mem_limit: 300m
+    mem_reservation: 192m
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      # Dev convenience: no login wall, land straight on dashboards.
+      # PRODUCTION: remove anonymous auth and set a real admin password.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # Enable the built-in Explore + trace/log correlation UX.
+      GF_FEATURE_TOGGLES_ENABLE: "traceqlEditor traceToMetrics"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - mimir
+      - loki
+      - tempo
+
 volumes:
   postgres-data:
     # Named volume keeps the database across `docker compose down`
     # but a `docker compose down -v` clears it (handy for dev).
     name: sso-postgres-data
+  tempo-data:
+    name: sso-tempo-data
+  mimir-data:
+    name: sso-mimir-data
+  loki-data:
+    name: sso-loki-data
+  grafana-data:
+    name: sso-grafana-data

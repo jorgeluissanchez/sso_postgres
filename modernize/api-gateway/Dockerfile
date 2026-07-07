@@ -54,8 +54,8 @@ RUN mvn -B -ntp -pl api-gateway -am clean package -DskipTests -q
 FROM eclipse-temurin:25-jre
 WORKDIR /app
 
-RUN groupadd --system --gid 1000 app && \
-    useradd  --system --uid 1000 --gid app --home /app app
+RUN groupadd --system --gid 10001 app && \
+    useradd  --system --uid 10001 --gid app --home /app app
 
 COPY --from=java-build --chown=app:app /workspace/api-gateway/target/api-gateway.jar /app/app.jar
 
