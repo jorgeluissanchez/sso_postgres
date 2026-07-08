@@ -131,7 +131,7 @@ public class GatewaySecurityConfig {
                         .pathMatchers("/api/auth/login").permitAll()
                         .pathMatchers("/api/auth/refresh", "/api/auth/logout").permitAll()
                         .pathMatchers("/actuator/health", "/actuator/health/**",
-                                "/actuator/info", "/actuator/prometheus").permitAll()
+                                "/actuator/info").permitAll()
                         .anyExchange().authenticated())
                 .addFilterAt(jwtFilter, SecurityWebFiltersOrder.AUTHENTICATION)
                 .build();
