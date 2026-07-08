@@ -26,6 +26,12 @@
 #   hello-service  — reference downstream service, registers with
 #                    Eureka, reachable at /hello-service/** via the
 #                    gateway's dynamic route locator.
+#   notification-service
+#                  — multichannel notification consumer (email/SMS/push).
+#                    Reads JSON envelopes off RabbitMQ, renders
+#                    templates, dispatches to providers with circuit
+#                    breakers, and logs every send to Neon for
+#                    idempotency. Talks to Neon over SSL.
 #   sso-admin      — User/Role/Group CRUD + activation flow (Phase 1
 #                    of the sso-service port). Reachable at
 #                    /sso-admin/** through the gateway. Sends
@@ -483,16 +489,17 @@ services:
     mem_limit: 640m
     mem_reservation: 512m
     depends_on:
-      postgres:
-        condition: service_healthy
+      flyway:
+        condition: service_completed_successfully
       rabbitmq:
         condition: service_healthy
       eurekaserver:
         condition: service_started
     environment:
-      DB_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      # Neon cloud DB — same pattern as auth-center / sso-admin.
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://${DB_URL}/${DB_NAME}?sslmode=${DB_SSLMODE}&channel_binding=${DB_CHANNEL_BINDING}"
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
       EUREKA_URL: "http://eurekaserver:8761/eureka"
       # RabbitMQ
       RABBITMQ_HOST: rabbitmq
@@ -517,6 +524,8 @@ services:
       EMAILJS_PUBLIC_KEY: ${EMAILJS_PUBLIC_KEY:-}
       EMAILJS_PRIVATE_KEY: ${EMAILJS_PRIVATE_KEY:-}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      # Observability: push OTLP to Alloy
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8085; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
@@ -772,8 +781,11 @@ services:
     image: grafana/tempo:2.10.7
     container_name: sso-tempo
     restart: unless-stopped
-    mem_limit: 512m
-    mem_reservation: 256m
+    # Bumped from 512m after enabling metrics_generator (spans
+    # processed into RED metrics + service graph; needs the
+    # extra headroom on cold start when the WAL replays).
+    mem_limit: 768m
+    mem_reservation: 384m
     command: ["-config.file=/etc/tempo/tempo.yaml"]
     volumes:
       - ./observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
@@ -828,10 +840,6 @@ services:
       - tempo
 
 volumes:
-  postgres-data:
-    # Named volume keeps the database across `docker compose down`
-    # but a `docker compose down -v` clears it (handy for dev).
-    name: sso-postgres-data
   rabbitmq-data:
     # Persists the broker's mnesia directory (durable queues,
     # exchanges, persistent messages) across `docker compose down`.
