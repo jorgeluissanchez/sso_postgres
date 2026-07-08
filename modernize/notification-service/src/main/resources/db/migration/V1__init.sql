@@ -16,7 +16,7 @@
 -- WARN log (never block startup).
 -- =============================================================
 
-CREATE TABLE notification_log (
+CREATE TABLE IF NOT EXISTS notification_log (
     id                  BIGSERIAL    PRIMARY KEY,
     notification_id     UUID         NOT NULL UNIQUE,
     channel             VARCHAR(10)  NOT NULL,
@@ -34,12 +34,12 @@ CREATE TABLE notification_log (
         channel IN ('SMS','EMAIL','PUSH')
     )
 );
-CREATE INDEX idx_notification_log_channel_status
+CREATE INDEX IF NOT EXISTS idx_notification_log_channel_status
     ON notification_log (channel, status);
-CREATE INDEX idx_notification_log_created_at
+CREATE INDEX IF NOT EXISTS idx_notification_log_created_at
     ON notification_log (created_at);
 
-CREATE TABLE provider_config (
+CREATE TABLE IF NOT EXISTS provider_config (
     id           BIGSERIAL    PRIMARY KEY,
     channel      VARCHAR(10)  NOT NULL,
     provider_key VARCHAR(30)  NOT NULL,
@@ -65,7 +65,8 @@ INSERT INTO provider_config
     (channel, provider_key, impl, enabled, priority, weight, policy, settings)
 VALUES
     ('SMS', 'twilio', 'TWILIO', TRUE,  1, 1, 'PRIORITY', '{}'::jsonb),
-    ('SMS', 'vonage', 'VONAGE', FALSE, 2, 1, 'PRIORITY', '{}'::jsonb);
+    ('SMS', 'vonage', 'VONAGE', FALSE, 2, 1, 'PRIORITY', '{}'::jsonb)
+ON CONFLICT (channel, provider_key) DO NOTHING;
 
 -- ---- seed: EMAIL ----------------------------------------------
 -- smtp-brevo is the recommended primary: relay at
@@ -105,7 +106,8 @@ VALUES
             'private_key_env', 'EMAILJS_PRIVATE_KEY',
             'template_id', 'passthrough',
             'from', 'no-reply@example.com'
-        ));
+        ))
+ON CONFLICT (channel, provider_key) DO NOTHING;
 
 -- ---- seed: PUSH -----------------------------------------------
 INSERT INTO provider_config
@@ -115,7 +117,8 @@ VALUES
         jsonb_build_object(
             'credentials_env', 'GOOGLE_APPLICATION_CREDENTIALS',
             'project_id', '<filled from the FCM service-account JSON key file>'
-        ));
+        ))
+ON CONFLICT (channel, provider_key) DO NOTHING;
 
 -- ---- seed: fakes (always disabled in production) -------------
 -- Tests flip these to enabled=TRUE on demand; in production
@@ -128,4 +131,5 @@ INSERT INTO provider_config
 VALUES
     ('SMS',   'fake-sms',   'FAKE', FALSE, 999, 1, 'PRIORITY', '{}'::jsonb),
     ('EMAIL', 'fake-email', 'FAKE', FALSE, 999, 1, 'PRIORITY', '{}'::jsonb),
-    ('PUSH',  'fake-push',  'FAKE', FALSE, 999, 1, 'PRIORITY', '{}'::jsonb);
+    ('PUSH',  'fake-push',  'FAKE', FALSE, 999, 1, 'PRIORITY', '{}'::jsonb)
+ON CONFLICT (channel, provider_key) DO NOTHING;

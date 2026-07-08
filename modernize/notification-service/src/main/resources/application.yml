@@ -56,6 +56,14 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
     baseline-version: 0
+    # Distinct history table — this service shares the `public`
+    # schema with the rest of the stack, and the top-level
+    # `postgres/migrations` (run by the standalone `flyway`
+    # compose service) ALSO tracks "version 1" in the default
+    # `flyway_schema_history` table. Without this override the
+    # two independent migration sets stomp on each other's
+    # checksum for version 1 every time either one runs.
+    table: flyway_schema_history_notification
 
   rabbitmq:
     host: ${RABBITMQ_HOST:localhost}
@@ -78,7 +86,7 @@ spring:
           enabled: true
           initial-interval: 2s
           multiplier: 3
-          max-attempts: 4
+          max-retries: 4
           stateless: true
 
   # Thymeleaf for email templates. Templates live in

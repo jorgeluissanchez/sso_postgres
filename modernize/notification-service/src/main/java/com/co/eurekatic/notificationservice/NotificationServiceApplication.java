@@ -25,13 +25,13 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  *       config + breaker state via {@code /actuator/providers}.</li>
  * </ul>
  *
- * <p>{@code common}'s entities, repositories and security helpers
- * live outside this app's default base package, and this app has
- * its own {@code repository} subpackage (e.g.
- * {@code NotificationLogRepository}), so {@code ComponentScan},
- * {@code EntityScan} and {@code EnableJpaRepositories} all have to
- * point at the right packages explicitly — same pattern as
- * {@code AuthCenterApplication}.
+ * <p>This app owns its own minimal schema (no dependency on
+ * {@code common}'s entities/repositories) and has its own
+ * {@code repository}-ish subpackage (e.g.
+ * {@code NotificationLogRepository} in {@code repository},
+ * {@code ProviderConfigRepository} in {@code provider}), so
+ * {@code EnableJpaRepositories} scans the whole module subtree
+ * to catch both.
  *
  * <p><b>Spring Boot 4 migration:</b> {@code EntityScan} moved from
  * {@code org.springframework.boot.autoconfigure.domain} to
@@ -43,25 +43,29 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableDiscoveryClient
 @EnableScheduling
 @ComponentScan(basePackages = {
-        "com.co.eurekatic.notificationservice",
-        "com.co.eurekatic.common.entity",
-        "com.co.eurekatic.common.repository",
-        "com.co.eurekatic.common.security"
+        "com.co.eurekatic.notificationservice"
 })
 @EntityScan(basePackages = {
         // NotificationLog lives in this module's `domain`
         // package; scanning the whole module subtree catches it
         // and any future entities without re-touching this list.
         // JpaRepository interfaces get filtered out automatically.
-        "com.co.eurekatic.notificationservice",
-        "com.co.eurekatic.common.entity"
+        // Deliberately does NOT include common.entity — this
+        // service owns its own minimal schema (notification_log,
+        // provider_config, via its own Flyway migrations under
+        // db/migration) and never reads/writes the shared `sso`
+        // entities. Scanning common.entity here made
+        // ddl-auto=validate check those tables too, which don't
+        // exist in this service's schema — fails startup in any
+        // environment (e.g. tests) that doesn't also happen to
+        // point at a fully-migrated `sso` database.
+        "com.co.eurekatic.notificationservice"
 })
 @EnableJpaRepositories(basePackages = {
         // ProviderConfigRepository actually lives in the
         // `provider` subpackage, not a dedicated `repository`
         // one — scanning the whole module subtree catches both.
-        "com.co.eurekatic.notificationservice",
-        "com.co.eurekatic.common.repository"
+        "com.co.eurekatic.notificationservice"
 })
 public class NotificationServiceApplication {
 

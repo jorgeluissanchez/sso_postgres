@@ -58,6 +58,14 @@ public class ProviderRegistry {
     private final boolean failOnMissingCredentials;
 
     private volatile Map<Channel, List<RegisteredProvider>> roster = new EnumMap<>(Channel.class);
+    // Settings-by-key is written for a row IMMEDIATELY when it's read from
+    // the DB, before isConfigured() is evaluated for that same row — kept
+    // separate from `roster` (and mutated in place, not swapped) so a
+    // provider's isConfigured() can see its own just-fetched settings via
+    // settingsFor(). If it only read from `roster`, a provider would need
+    // to already be active to become active — it never would be, on the
+    // first refresh or after any prior failed check.
+    private final Map<String, Map<String, Object>> settingsByKey = new ConcurrentHashMap<>();
     private volatile Instant lastLoadedAt = Instant.EPOCH;
 
     public ProviderRegistry(ProviderConfigRepository repo,
@@ -99,6 +107,10 @@ public class ProviderRegistry {
                             channel, row.providerKey(), row.impl());
                     continue;
                 }
+                // Written before isConfigured() runs so the check can see
+                // this row's own settings via settingsFor() — see the field
+                // comment on settingsByKey.
+                settingsByKey.put(row.providerKey(), row.settings());
                 boolean configured;
                 try {
                     configured = bean.isConfigured();
@@ -143,19 +155,14 @@ public class ProviderRegistry {
      * the orchestrator (e.g. {@code SmtpEmailProvider} reads
      * its host/port/credentials on every call).
      *
-     * @return the latest settings JSON for {@code providerKey},
-     *         or empty if the provider is not in the live roster
-     *         (disabled, missing bean, or credentials absent).
+     * @return the latest settings JSON for {@code providerKey} as of the
+     *         last refresh, or empty if its {@code provider_config} row is
+     *         disabled (or doesn't exist). Available even when the provider
+     *         isn't currently in the active roster — {@code isConfigured()}
+     *         implementations call this to decide whether they belong there.
      */
     public Optional<Map<String, Object>> settingsFor(String providerKey) {
-        for (List<RegisteredProvider> list : roster.values()) {
-            for (RegisteredProvider rp : list) {
-                if (rp.providerKey().equals(providerKey)) {
-                    return Optional.ofNullable(rp.row().settings());
-                }
-            }
-        }
-        return Optional.empty();
+        return Optional.ofNullable(settingsByKey.get(providerKey));
     }
 
     /**

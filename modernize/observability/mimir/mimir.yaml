@@ -18,8 +18,11 @@ usage_stats:
 common:
   storage:
     backend: filesystem
+    # Must not overlap with blocks_storage.tsdb.dir below — Mimir
+    # refuses to start if the filesystem "bucket" (where compacted
+    # blocks live) nests inside the local TSDB WAL/head directory.
     filesystem:
-      dir: /data/mimir
+      dir: /data/mimir/blocks
 
 blocks_storage:
   tsdb:

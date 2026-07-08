@@ -90,7 +90,12 @@ import static org.springframework.security.test.web.servlet.setup.SecurityMockMv
         // Don't run mail health probe — the fake SMTP isn't
         // actually serving, and the indicator would push the
         // /actuator/health aggregate to 503.
-        "management.health.mail.enabled=false"
+        "management.health.mail.enabled=false",
+        // Same for RabbitMQ — no broker running in this test
+        // (NotificationEventPublisher is mocked above, but the
+        // RabbitHealthIndicator talks to the ConnectionFactory
+        // bean directly, bypassing the mock).
+        "management.health.rabbit.enabled=false"
 })
 class SsoAdminIntegrationTest {
 
@@ -358,11 +363,14 @@ class SsoAdminIntegrationTest {
     @Test
     void activateAccountRejectsShortPassword() throws Exception {
         // @Size(min = 6) on the TokenPasswordRequest.password field
-        // turns "123" into a 400 BEFORE the service is reached, so
-        // the existing service-level invariant (IllegalArgumentException
-        // → 400 INVALID_REQUEST) is still defended by a higher layer.
-        // This pins the controller-side validation contract that
-        // closed the GET-with-password-in-query leak surface.
+        // turns "123" into a MethodArgumentNotValidException BEFORE
+        // the service is reached, so the existing service-level
+        // invariant (IllegalArgumentException → 400 INVALID_REQUEST)
+        // is still defended by a higher layer. GlobalExceptionHandler
+        // maps all @Valid body violations to 422 (same as
+        // createAccountRejectsInvalidEmailWith422) — this pins the
+        // controller-side validation contract that closed the
+        // GET-with-password-in-query leak surface.
         String body = mapper.writeValueAsString(Map.of(
                 "token", "anything",
                 "password", "123"));
@@ -370,7 +378,7 @@ class SsoAdminIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .exchange()
-                .expectStatus().isBadRequest();
+                .expectStatus().isEqualTo(422);
     }
 
     @Test
@@ -467,7 +475,7 @@ class SsoAdminIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .exchange()
-                .expectStatus().isBadRequest();
+                .expectStatus().isEqualTo(422);
     }
 
     @Test

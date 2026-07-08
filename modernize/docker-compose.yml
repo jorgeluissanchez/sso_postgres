@@ -725,7 +725,12 @@ services:
       - loki
 
   tempo:
-    image: grafana/tempo:latest
+    # Pinned — Tempo 3.0 removed the ingester/compactor architecture
+    # this config (and its monolithic single-binary deployment) is
+    # written for, replacing it with block-builder/live-store. 2.10.7
+    # is the last 2.x release; bumping to 3.x needs a config rewrite
+    # (see https://grafana.com/docs/tempo/latest/set-up-for-tracing/setup-tempo/migrate-to-3/).
+    image: grafana/tempo:2.10.7
     container_name: sso-tempo
     restart: unless-stopped
     mem_limit: 512m
@@ -787,6 +792,11 @@ volumes:
     # Named volume keeps the database across `docker compose down`
     # but a `docker compose down -v` clears it (handy for dev).
     name: sso-postgres-data
+  rabbitmq-data:
+    # Persists the broker's mnesia directory (durable queues,
+    # exchanges, persistent messages) across `docker compose down`.
+    # `docker compose down -v` clears it.
+    name: sso-rabbitmq-data
   tempo-data:
     name: sso-tempo-data
   mimir-data:
