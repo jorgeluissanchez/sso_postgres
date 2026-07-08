@@ -163,6 +163,8 @@ services:
       # Standalone Eureka — does not register with itself.
       EUREKA_CLIENT_REGISTER_WITH_EUREKA: "false"
       EUREKA_CLIENT_FETCH_REGISTRY: "false"
+      # Observability: push OTLP to Alloy
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8761; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
@@ -238,6 +240,8 @@ services:
       SSO_ADMIN_USERNAME: ${SSO_ADMIN_USERNAME}
       SSO_ADMIN_PASSWORD: ${SSO_ADMIN_PASSWORD}
       SSO_ADMIN_EMAIL: ${SSO_ADMIN_EMAIL}
+      # Observability: push OTLP to Alloy
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8081; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
@@ -284,7 +288,7 @@ services:
       # collector over the compose network. When the observability
       # services are not running these exporters just log a connection
       # warning and the gateway keeps serving — telemetry is best-effort.
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://alloy:4318"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8080; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
@@ -308,6 +312,8 @@ services:
       - "${HELLO_SERVICE_PORT:-8082}:8082"
     environment:
       EUREKA_URL: "http://eurekaserver:8761/eureka"
+      # Observability: push OTLP to Alloy
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
     # No healthcheck on the public port — the gateway's
     # actuator/health is the canonical signal, and the service
     # itself doesn't expose /actuator/health to the public.
@@ -401,6 +407,8 @@ services:
       RABBITMQ_PORT: "5672"
       RABBITMQ_USER: ${RABBITMQ_USER}
       RABBITMQ_PASS: ${RABBITMQ_PASS}
+      # Observability: push OTLP to Alloy
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8083; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
@@ -577,6 +585,8 @@ services:
       # are NOT prefixed, so the gateway base URL plus
       # the literal /getQuery path resolves them.
       QUERY_CATALOG_BASE_URL: "http://sso-api-gateway:8080/sso-admin"
+      # Observability: push OTLP to Alloy
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8084; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
@@ -684,6 +694,8 @@ services:
       # container as JWT_SECRET env var. Must match the
       # secret auth-center uses to sign tokens.
       DOCKER_JWT_SECRET: ${JWT_SECRET}
+      # Observability: push OTLP to Alloy
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
     healthcheck:
       # The provisioner image installs curl (it talks to
       # the Docker socket via curl --unix-socket) but not
@@ -720,6 +732,14 @@ services:
     restart: unless-stopped
     mem_limit: 300m
     mem_reservation: 192m
+    # The Grafana host user (root inside the container, see below) needs
+    # to read the docker socket to enumerate + tail every compose-managed
+    # container. We run alloy as a single process as user root and rely on
+    # the host socket's perms (mode 0600 on colima + Docker Desktop). On
+    # Linux servers where the socket is mode 0660 + `root:docker`, replace
+    # `user: "0:0"` with `group_add: ["<docker-group-gid>"]` and drop the
+    # explicit user.
+    user: "0:0"
     command:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
@@ -727,6 +747,12 @@ services:
       - /etc/alloy/config.alloy
     volumes:
       - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      # loki.source.docker enumerates + tails every running container's
+      # stdout/stderr. The provisioner service already binds /var/run/
+      # docker.sock so this compose network is the trust boundary for
+      # "who can spawn containers" — alloy only needs read access to
+      # the socket to LIST and STREAM.
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       # Alloy UI (http://localhost:12345) + Faro receiver for the SPA
       # (the browser runs on the host, so this one needs a host mapping).
