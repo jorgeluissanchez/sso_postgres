@@ -12,6 +12,7 @@ import {
 import type { MicroserviceResponse, MicroserviceKind } from "@/api/types";
 import { MicroserviceFormDrawer } from "./MicroserviceFormDrawer";
 import type { MicroserviceFormValues } from "@/schemas";
+import { QueryServicesPanel } from "./QueryServicesPanel";
 
 export function MicroservicesListPage() {
   const microservices = useMicroservices();
@@ -105,6 +106,9 @@ export function MicroservicesListPage() {
         loading={microservices.isLoading}
         empty="Aún no hay microservicios."
       />
+      <div className="mt-8">
+        <QueryServicesPanel rows={microservices.data ?? []} />
+      </div>
       <MicroserviceFormDrawer
         open={creating || editing !== null}
         microservice={editing}

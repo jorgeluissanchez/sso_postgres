@@ -24,8 +24,8 @@ import type { QueryFormValues } from "@/schemas";
  * confirm-delete modal + a separate roles-binding modal.
  *
  * <p>Distinct from {@code QueriesCatalogPage} (the
- * consumer-facing catalog at {@code /admin/queries}): this
- * page manages the rows; the catalog page reads + executes
+ * consumer-facing execution page at {@code /admin/queries}):
+ * this page manages the rows; the catalog page reads + executes
  * them. The two share the
  * {@code useInvalidateQueryAdminAndCatalog} hook so a role
  * binding here refreshes the consumer catalog too (per-row

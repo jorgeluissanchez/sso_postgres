@@ -67,9 +67,12 @@ public class SecurityConfig {
                 .logout(logout -> logout.disable())
                 .authorizeHttpRequests(a -> a
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        // Health probes.
+                        // Health probes + Grafana Alloy scrape endpoint. The scraper
+                        // lives on the internal docker network; we don't
+                        // require an API key here because every other
+                        // route does its own JWT check anyway.
                         .requestMatchers("/actuator/health", "/actuator/health/**",
-                                "/actuator/info").permitAll()
+                                "/actuator/info", "/actuator/prometheus").permitAll()
                         // Public service: per-query authorization
                         // is the publicEnd flag, not a Spring
                         // Security rule. 403 for non-public uuids

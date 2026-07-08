@@ -6,10 +6,8 @@ import { RestorePasswordPage } from "@/auth/RestorePasswordPage";
 import { App } from "@/App";
 import { GroupsListPage } from "@/pages/groups/GroupsListPage";
 import { MicroservicesListPage } from "@/pages/microservices/MicroservicesListPage";
-import { QueryServicesListPage } from "@/pages/query-services/QueryServicesListPage";
 import { QueriesCatalogPage } from "@/pages/queries/QueriesCatalogPage";
 import { QueriesAdminPage } from "@/pages/queries/QueriesAdminPage";
-import { QueriesDynamicPage } from "@/pages/queries/QueriesDynamicPage";
 import { EndpointsListPage } from "@/pages/endpoints/EndpointsListPage";
 import { RoutesListPage } from "@/pages/routes/RoutesListPage";
 import { RolesListPage } from "@/pages/roles/RolesListPage";
@@ -60,10 +58,10 @@ export const router = createBrowserRouter([
           { path: "roles", element: <RolesListPage /> },
           { path: "groups", element: <GroupsListPage /> },
           { path: "microservices", element: <MicroservicesListPage /> },
-          { path: "query-services", element: <QueryServicesListPage /> },
           { path: "queries", element: <QueriesCatalogPage /> },
           { path: "query-catalog", element: <QueriesAdminPage /> },
-          { path: "dynamic-crud", element: <QueriesDynamicPage /> },
+          { path: "query-services", element: <Navigate to="microservices" replace /> },
+          { path: "dynamic-crud", element: <Navigate to="queries" replace /> },
           { path: "endpoints", element: <EndpointsListPage /> },
           { path: "routes", element: <RoutesListPage /> },
           { path: "apps", element: <AppsListPage /> },

@@ -12,7 +12,12 @@
 #                    Redis loses state, every active session
 #                    gets a forced re-login once — by design.
 #   eurekaserver   — Netflix Eureka on :8761 for service discovery.
-#   auth-center    — login + JWT issuance, talks to Postgres.
+#   flyway         — one-shot schema migrator against Neon
+#                    (DB_URL/DB_USER/DB_PASSWORD in .env). EXITS
+#                    after applying ./postgres/migrations (V1..V7);
+#                    every Spring service depends_on it as
+#                    `service_completed_successfully`.
+#   auth-center    — login + JWT issuance, talks to Neon over SSL.
 #   api-gateway    — reactive Spring Cloud Gateway, validates JWTs
 #                    and injects X-Authenticated-* headers. Also
 #                    serves the admin-ui SPA at /admin/** (the SPA
@@ -38,10 +43,24 @@
 #                    API call that starts a new query-service
 #                    container on the compose network. Not
 #                    reachable from the host — internal-only.
+#   query-service-postgres  + query-service-postgres-analytics
+#                  — two instances of the same query-service image
+#                    pointed at the same Neon DB with different
+#                    QUERY_INSTANCE_NAME values (the analytics one
+#                    is a placeholder for a separate backing store
+#                    later). The gateway routes
+#                    /query-service-postgres/** and
+#                    /query-service-postgres-analytics/** to them.
+#
+# Postgres: there is NO local postgres service in this compose. The
+# schema lives in Neon (see .env for DB_URL). Every service that
+# previously depended_on the local `postgres` service now depends_on
+# the `flyway` one-shot migrator instead, so the schema is guaranteed
+# to exist before any app boots.
 #
 # Usage:
-#   cp .env.example .env        # edit secrets
-#   docker compose build        # build all 4 service images
+#   cp .env.example .env        # edit secrets (Neon conn string, JWT, etc.)
+#   docker compose build        # build all service images
 #   docker compose up -d        # start the stack
 #   docker compose logs -f api-gateway
 #
@@ -74,10 +93,6 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      # NOTE: the schema is NO LONGER created by docker-entrypoint-initdb.d
-      # shell scripts. The `flyway` service below owns all DDL as versioned
-      # migrations under ./postgres/migrations (V1__..V7__). The postgres
-      # image still creates the empty `sso` database via POSTGRES_DB.
     healthcheck:
       # pg_isready returns 0 when the cluster is accepting
       # connections, 3 when starting up, 1 on error.
@@ -88,11 +103,17 @@ services:
       start_period: 10s
 
   # ===========================================================================
-  # flyway — one-shot schema migrator. Runs `migrate` against the `sso`
-  # database and EXITS (it is not a long-running service). Every Spring
-  # service that talks to the sso schema depends on this completing
-  # successfully, so the schema is guaranteed present + at the expected
-  # version before any app boots (all of them run ddl-auto=validate).
+  # flyway — one-shot schema migrator. Runs `migrate` against Neon and
+  # EXITS (it is not a long-running service). Every Spring service that
+  # talks to the sso schema depends on this completing successfully, so
+  # the schema is guaranteed present + at the expected version before
+  # any app boots (all of them run ddl-auto=validate).
+  #
+  # Connects to Neon over the public internet with sslmode=require (the
+  # sslmode is part of DB_URL; the Postgres JDBC driver applies it to the
+  # SSL socket before sending the startup packet). Flyway retry policy:
+  # `-connectRetries=60` covers the cold-start window where the container
+  # may reach Neon before Neon's proxy is warm.
   #
   # This replaces the old postgres/init/*.sh scripts. Migrations live in
   # ./postgres/migrations (V1__..V7__) and are the single source of
@@ -107,14 +128,11 @@ services:
   flyway:
     image: flyway/flyway:11-alpine
     container_name: sso-flyway
-    depends_on:
-      postgres:
-        condition: service_healthy
     command: ["-connectRetries=60", "migrate"]
     environment:
-      FLYWAY_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
-      FLYWAY_USER: ${POSTGRES_USER}
-      FLYWAY_PASSWORD: ${POSTGRES_PASSWORD}
+      FLYWAY_URL: "jdbc:postgresql://${DB_URL}/${DB_NAME}?sslmode=${DB_SSLMODE}&channel_binding=${DB_CHANNEL_BINDING}"
+      FLYWAY_USER: ${DB_USER}
+      FLYWAY_PASSWORD: ${DB_PASSWORD}
       FLYWAY_DEFAULT_SCHEMA: public
       # Baseline an already-populated schema (e.g. an existing dev volume
       # created by the old .sh scripts) at version 0 so V1..V7 still run;
@@ -193,8 +211,6 @@ services:
     mem_limit: 640m
     mem_reservation: 512m
     depends_on:
-      postgres:
-        condition: service_healthy
       flyway:
         # Schema must be migrated before auth-center runs ddl-auto=validate
         # and DataInitializer seeds the admin user into users/role.
@@ -206,11 +222,9 @@ services:
     ports:
       - "${AUTH_CENTER_PORT:-8081}:8081"
     environment:
-      # Datasource — points at the `postgres` service on the
-      # compose network, not localhost.
-      DB_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://${DB_URL}/${DB_NAME}?sslmode=${DB_SSLMODE}&channel_binding=${DB_CHANNEL_BINDING}"
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
       # Discovery
       EUREKA_URL: "http://eurekaserver:8761/eureka"
       # JWT
@@ -319,8 +333,6 @@ services:
     mem_limit: 3g
     mem_reservation: 2g
     depends_on:
-      postgres:
-        condition: service_healthy
       flyway:
         # Schema (groups/microservice/endpoint/route/app/query/write)
         # must exist before sso-admin's ddl-auto=validate runs.
@@ -346,9 +358,13 @@ services:
     ports:
       - "${SSO_ADMIN_PORT:-8083}:8083"
     environment:
-      DB_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      # Neon cloud DB. compose composes the JDBC URL inline from
+      # DB_URL (host:port) + DB_NAME + DB_SSLMODE + DB_CHANNEL_BINDING
+      # and overrides spring.datasource.url via the standard
+      # Spring env var.
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://${DB_URL}/${DB_NAME}?sslmode=${DB_SSLMODE}&channel_binding=${DB_CHANNEL_BINDING}"
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
       EUREKA_URL: "http://eurekaserver:8761/eureka"
       # MUST match auth-center's JWT_SECRET — same key signs and
       # verifies tokens.
@@ -533,8 +549,6 @@ services:
     mem_limit: 384m
     mem_reservation: 256m
     depends_on:
-      postgres:
-        condition: service_healthy
       eurekaserver:
         condition: service_started
       sso-admin:
@@ -549,11 +563,12 @@ services:
     # resolution.
     environment:
       # Per-instance config (instance mode). See
-      # InstanceProps.java.
+      # InstanceProps.java. Neon cloud DB, sslmode=require
+      # is encoded in the URL itself.
       QUERY_DS_DIALECT: postgres
-      QUERY_DS_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
-      QUERY_DS_USERNAME: ${POSTGRES_USER}
-      QUERY_DS_PASSWORD: ${POSTGRES_PASSWORD}
+      QUERY_DS_URL: "jdbc:postgresql://${QUERY_DS_POSTGRES_HOST}:${QUERY_DS_POSTGRES_PORT}/${QUERY_DS_POSTGRES_NAME}?sslmode=${QUERY_DS_POSTGRES_SSLMODE}&channel_binding=${QUERY_DS_POSTGRES_CHANNEL_BINDING}"
+      QUERY_DS_USERNAME: ${QUERY_DS_POSTGRES_USER}
+      QUERY_DS_PASSWORD: ${QUERY_DS_POSTGRES_PASSWORD}
       QUERY_DS_POOL_SIZE: "10"
       # Eureka + JWT (same key auth-center uses)
       EUREKA_URL: "http://eurekaserver:8761/eureka"
@@ -583,17 +598,15 @@ services:
     mem_limit: 384m
     mem_reservation: 256m
     depends_on:
-      postgres:
-        condition: service_healthy
       eurekaserver:
         condition: service_started
       sso-admin:
         condition: service_healthy
     environment:
       QUERY_DS_DIALECT: postgres
-      QUERY_DS_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
-      QUERY_DS_USERNAME: ${POSTGRES_USER}
-      QUERY_DS_PASSWORD: ${POSTGRES_PASSWORD}
+      QUERY_DS_URL: "jdbc:postgresql://${QUERY_DS_POSTGRES_HOST}:${QUERY_DS_POSTGRES_PORT}/${QUERY_DS_POSTGRES_NAME}?sslmode=${QUERY_DS_POSTGRES_SSLMODE}&channel_binding=${QUERY_DS_POSTGRES_CHANNEL_BINDING}"
+      QUERY_DS_USERNAME: ${QUERY_DS_POSTGRES_USER}
+      QUERY_DS_PASSWORD: ${QUERY_DS_POSTGRES_PASSWORD}
       QUERY_DS_POOL_SIZE: "10"
       # Distinct instance name → distinct Eureka service-id
       # → the gateway routes
@@ -779,6 +792,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       # Enable the built-in Explore + trace/log correlation UX.
       GF_FEATURE_TOGGLES_ENABLE: "traceqlEditor traceToMetrics"
+      GF_PLUGINS_DISABLE_AUTO_UPDATE: "true"
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana-data:/var/lib/grafana

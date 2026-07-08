@@ -14,10 +14,11 @@ spring:
     # The localhost default assumes the operator is running
     # sso-admin on the host with Postgres reachable via the
     # Docker port mapping. For container runs the compose
-    # env block overrides this with `postgres` (the
-    # in-network hostname). See auth-center's datasource
-    # block for the full set of overrides.
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/sso}
+    # env block sets SPRING_DATASOURCE_URL with the
+    # fully-built JDBC URL, so this property is overridden
+    # at runtime. The default below is the host-mode
+    # fallback for `mvn spring-boot:run` outside compose.
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/sso}
     username: ${DB_USER:sso}
     password: ${DB_PASSWORD:change-me-in-prod}
     driver-class-name: org.postgresql.Driver

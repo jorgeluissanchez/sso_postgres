@@ -97,6 +97,14 @@ export interface GroupRequest {
   description: string;
 }
 
+/** Per-group checked-listing of roles. Mirrors
+ *  {@code com.co.eurekatic.ssoadmin.service.GroupService.RoleChecked}. */
+export interface GroupRoleChecked {
+  roleId: number;
+  name: string;
+  checked: boolean;
+}
+
 // ====================== sso-admin / microservice ======================
 
 export type MicroserviceKind = "REST" | "QUERY";

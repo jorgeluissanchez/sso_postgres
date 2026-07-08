@@ -130,4 +130,41 @@ describe("MicroservicesListPage — kind=QUERY end-to-end", () => {
     // eslint-disable-next-line no-console
     console.log("\n>>> wire payload:\n" + JSON.stringify(body, null, 2));
   });
+
+  it("renders inline QUERY operations for provisioned microservices", async () => {
+    const queryRow = {
+      id: 7,
+      serviceId: "query-oracle-dev",
+      description: "dev oracle",
+      requestUri: "/api/queries/**",
+      targetUriPath: "",
+      targetUrlHost: "",
+      targetUrlPort: "",
+      createdDate: "2026-06-26T00:00:00Z",
+      kind: "QUERY",
+      dialect: "oracle",
+      jdbcUrl: "jdbc:oracle:thin:@db:1521/ORCLPDB1",
+      dbUsername: "query",
+      dbPassword: null,
+      poolSize: 10,
+      instanceName: "oracle-dev",
+    };
+    fetchSpy.mockResolvedValueOnce(jsonResponse([queryRow]));
+    fetchSpy.mockResolvedValueOnce(
+      jsonResponse({
+        state: "running",
+        rawState: "running",
+        containerId: "abc123",
+        startedAt: "2026-06-24T10:00:00.000Z",
+        fullName: "query-service-oracle-dev",
+      }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText(/Servicios QUERY/i)).toBeInTheDocument();
+    expect(await screen.findByTestId("status-cell-7")).toHaveTextContent(/UP/i);
+    expect(screen.getByTestId("view-logs-7")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Reiniciar/i })).toBeInTheDocument();
+  });
 });

@@ -56,7 +56,7 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
-        <!-- Prometheus scrape endpoint. Version resolved by Boot 4 BOM. -->
+        <!-- Prometheus scrape endpoint. Version resolved by Boot 4 BOM. Exposed via /actuator/prometheus for the Grafana Alloy scraper. -->
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
