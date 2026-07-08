@@ -8,7 +8,10 @@
 // ====================== auth-center ======================
 
 export interface LoginRequest {
-  username: string;
+  // Wire key changed from `username` to `email` in the V12
+  // refactor (email is the unique login identifier; the
+  // legacy `users.username` column is gone).
+  email: string;
   password: string;
 }
 
@@ -20,7 +23,6 @@ export interface TokenResponse {
 
 export interface UserSummary {
   id: number;
-  username: string;
   email: string;
   fullName: string;
   enabled: boolean;
@@ -32,7 +34,6 @@ export interface UserSummary {
 
 export interface UserResponse {
   id: number;
-  username: string;
   fullName: string;
   email: string;
   active: boolean;
@@ -41,19 +42,39 @@ export interface UserResponse {
   roleNames: string[];
 }
 
+/**
+ * Wire shape for {@code POST /sso-admin/createAccount}. The
+ * admin no longer sends a password — the user sets one by
+ * clicking the activation link in the email. The
+ * {@code /activateAccount} endpoint is the only place a
+ * password first enters the system for the new account.
+ *
+ * <p>Post-V12, the wire shape does NOT include `username` —
+ * email IS the login identifier and the only login-shaped
+ * field on the row.
+ */
 export interface CreateAccountRequest {
-  username: string;
   fullName: string;
   email: string;
-  password: string;
   roleNames: string[];
 }
 
+/**
+ * Wire shape for {@code PUT /sso-admin/updateAccount}. The
+ * lookup key is the numeric {@code id} (the user's PK) —
+ * email is mutable, so it isn't a stable identifier; the id
+ * is. See {@code com.co.eurekatic.ssoadmin.dto.UpdateAccountRequest}.
+ *
+ * <p>Password changes are NOT handled here — see
+ * {@code forgotPassword} + {@code restorePassword} for the
+ * user-driven flow. An admin who needs to reset a forgotten
+ * password triggers {@code GET /forgotPassword?email=…} on
+ * behalf of the user.
+ */
 export interface UpdateAccountRequest {
   id: number;
   fullName?: string;
   email?: string;
-  password?: string;
   roleNames?: string[];
 }
 
@@ -62,9 +83,14 @@ export interface BindUserRoleRequest {
   roleId: number;
 }
 
+/**
+ * Per-role checked-listing of users (used in the role-edit
+ * drawer). The identifying slot became {@code email} in the
+ * V12 refactor; full name is a separate column for display.
+ */
 export interface UserRoleChecked {
   userId: number;
-  username: string;
+  email: string;
   fullName: string;
   checked: boolean;
 }
@@ -423,11 +449,14 @@ export interface AppRoleChecked {
   checked: boolean;
 }
 
-/** Per-app checked-listing of users. The identifying field is
- *  {@code username} (matches the backend record). */
+/** Per-app checked-listing of users. The identifying slot
+ *  became {@code email} + {@code fullName} (both) in the V12
+ *  refactor; full name falls back to email when null. The
+ *  label only shows the full name to keep the grid readable. */
 export interface AppUserChecked {
   userId: number;
-  username: string;
+  fullName: string | null;
+  email: string;
   checked: boolean;
 }
 

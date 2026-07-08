@@ -91,9 +91,7 @@ class AuthCenterIntegrationTest {
     /**
      * One Redis container shared across the test class. Persistence
      * is disabled (matching the docker-compose service) — these
-     * tests assume the store is ephemeral, and the test for the
-     * "store unavailable" path is handled by stopping the container
-     * (see {@link #loginWhenRedisIsUnavailableReturns503}).
+     * tests assume the store is ephemeral.
      */
     @Container
     @SuppressWarnings("resource") // Testcontainers manages lifecycle
@@ -132,17 +130,17 @@ class AuthCenterIntegrationTest {
     ObjectMapper mapper;
 
     // NOTE: the two "store unavailable" tests originally planned for
-// this section (refreshWhenRedisIsUnavailableReturns401 and
-// loginWhenRedisIsUnavailableReturns503) are covered by the
-// smoke script in admin-ui/scripts/smoke-auth-refresh.sh (Commit 9)
-// against the live stack. Driving them as Spring integration tests
-// would require stopping the shared Testcontainers Redis container
-// or wiring a fake bean that bypasses Lettuce, both of which add
-// significant test infrastructure for a single happy-path /
-// sad-path pair. The Spring-level fail-closed behaviour is already
-// exercised by the production code paths visible in
-// JsonLoginFilter (503 on mint failure) and RefreshController
-// (401 store_unavailable on rotate Unavailable outcome).
+    // this section (refreshWhenRedisIsUnavailableReturns401 and
+    // loginWhenRedisIsUnavailableReturns503) are covered by the
+    // smoke script in admin-ui/scripts/smoke-auth-refresh.sh (Commit 9)
+    // against the live stack. Driving them as Spring integration tests
+    // would require stopping the shared Testcontainers Redis container
+    // or wiring a fake bean that bypasses Lettuce, both of which add
+    // significant test infrastructure for a single happy-path /
+    // sad-path pair. The Spring-level fail-closed behaviour is already
+    // exercised by the production code paths visible in
+    // JsonLoginFilter (503 on mint failure) and RefreshController
+    // (401 store_unavailable on rotate Unavailable outcome).
 
     /**
      * Built per-test from the live {@link WebApplicationContext} so it
@@ -175,7 +173,6 @@ class AuthCenterIntegrationTest {
         roleRepository.save(adminRole);
 
         User alice = new User();
-        alice.setUsername("alice");
         alice.setEmail("alice@example.com");
         alice.setFullName("Alice Example");
         alice.setPassword(passwordEncoder.encode("s3cret"));
@@ -192,7 +189,6 @@ class AuthCenterIntegrationTest {
         // be authenticated but rejected with 403 — not allowed to
         // see the full user list.
         User bob = new User();
-        bob.setUsername("bob");
         bob.setEmail("bob@example.com");
         bob.setFullName("Bob Example");
         bob.setPassword(passwordEncoder.encode("s3cret"));
@@ -207,7 +203,7 @@ class AuthCenterIntegrationTest {
     void loginWithBadCredentialsReturns401() {
         webTestClient.post().uri("/login")
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"username\":\"alice\",\"password\":\"wrong\"}")
+                .bodyValue("{\"email\":\"alice@example.com\",\"password\":\"wrong\"}")
                 .exchange()
                 .expectStatus().isEqualTo(HttpStatus.UNAUTHORIZED);
     }
@@ -216,7 +212,7 @@ class AuthCenterIntegrationTest {
     void loginWithGoodCredentialsReturnsJwt() throws Exception {
         byte[] bodyBytes = webTestClient.post().uri("/login")
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"username\":\"alice\",\"password\":\"s3cret\"}")
+                .bodyValue("{\"email\":\"alice@example.com\",\"password\":\"s3cret\"}")
                 .exchange()
                 .expectStatus().isEqualTo(HttpStatus.OK)
                 .returnResult(Void.class)
@@ -230,7 +226,7 @@ class AuthCenterIntegrationTest {
 
     @Test
     void getInfoUserAcceptsIssuedToken() throws Exception {
-        String token = loginAndGetToken("alice", "s3cret");
+        String token = loginAndGetToken("alice@example.com", "s3cret");
 
         byte[] bodyBytes = webTestClient.get().uri("/getInfoUser")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -240,8 +236,10 @@ class AuthCenterIntegrationTest {
                 .getResponseBodyContent();
 
         JsonNode body = mapper.readTree(bodyBytes);
-        assertThat(body.get("username").asText()).isEqualTo("alice");
+        // UserSummary no longer carries the `username` slot since
+        // the V12 migration (email IS the unique login identifier).
         assertThat(body.get("email").asText()).isEqualTo("alice@example.com");
+        assertThat(body.get("fullName").asText()).isEqualTo("Alice Example");
     }
 
     @Test
@@ -273,7 +271,7 @@ class AuthCenterIntegrationTest {
         // populates SecurityContext with his `["USER"]` authority)
         // but AccessDecisionManager denies access — the configured
         // accessDeniedHandler responds with 403.
-        String bobToken = loginAndGetToken("bob", "s3cret");
+        String bobToken = loginAndGetToken("bob@example.com", "s3cret");
         webTestClient.get().uri("/getUsersSSO")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + bobToken)
                 .exchange()
@@ -283,7 +281,7 @@ class AuthCenterIntegrationTest {
     @Test
     void getUsersSsoWithAdminTokenReturns200() throws Exception {
         // Alice has both USER and ADMIN. ADMIN is enough.
-        String aliceToken = loginAndGetToken("alice", "s3cret");
+        String aliceToken = loginAndGetToken("alice@example.com", "s3cret");
         byte[] bodyBytes = webTestClient.get().uri("/getUsersSSO")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + aliceToken)
                 .exchange()
@@ -301,11 +299,11 @@ class AuthCenterIntegrationTest {
         // 401/403/200 ladder is what the test pins down.
         assertThat(body.size()).isGreaterThanOrEqualTo(2);
 
-        java.util.Set<String> usernames = new java.util.HashSet<>();
+        java.util.Set<String> emails = new java.util.HashSet<>();
         for (JsonNode u : body) {
-            usernames.add(u.get("username").asText());
+            emails.add(u.get("email").asText());
         }
-        assertThat(usernames).contains("alice", "bob");
+        assertThat(emails).contains("alice@example.com", "bob@example.com");
     }
 
     /* ====================== /getToken absent surface ====================== */
@@ -342,7 +340,7 @@ class AuthCenterIntegrationTest {
         // shape end-to-end: an attacker with a stolen access
         // token cannot trigger any code path through /getToken
         // — there is no code path to trigger.
-        String aliceToken = loginAndGetToken("alice", "s3cret");
+        String aliceToken = loginAndGetToken("alice@example.com", "s3cret");
         webTestClient.get().uri(uriBuilder -> uriBuilder
                         .path("/getToken")
                         .queryParam("refreshToken", "ANY_GARBAGE")
@@ -372,7 +370,7 @@ class AuthCenterIntegrationTest {
     void loginSetsRefreshCookieWithCorrectAttributes() {
         FluxExchangeResult<Void> result = webTestClient.post().uri("/login")
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"username\":\"alice\",\"password\":\"s3cret\"}")
+                .bodyValue("{\"email\":\"alice@example.com\",\"password\":\"s3cret\"}")
                 .exchange()
                 .expectStatus().isEqualTo(HttpStatus.OK)
                 .returnResult(Void.class);
@@ -411,7 +409,7 @@ class AuthCenterIntegrationTest {
         // First, log in to get a cookie.
         FluxExchangeResult<Void> loginResult = webTestClient.post().uri("/login")
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"username\":\"alice\",\"password\":\"s3cret\"}")
+                .bodyValue("{\"email\":\"alice@example.com\",\"password\":\"s3cret\"}")
                 .exchange()
                 .expectStatus().isEqualTo(HttpStatus.OK)
                 .returnResult(Void.class);
@@ -465,7 +463,7 @@ class AuthCenterIntegrationTest {
      */
     @Test
     void refreshReuseOfOldCookieReturns401AndWipesFamily() throws Exception {
-        String v1Cookie = loginAndGetCookie("alice", "s3cret");
+        String v1Cookie = loginAndGetCookie("alice@example.com", "s3cret");
 
         // 1st refresh: v1 → v2 (success).
         FluxExchangeResult<Void> refresh1 = webTestClient.post().uri("/auth/refresh")
@@ -500,7 +498,7 @@ class AuthCenterIntegrationTest {
      */
     @Test
     void refreshAfterLogoutReturns401() throws Exception {
-        String v1Cookie = loginAndGetCookie("alice", "s3cret");
+        String v1Cookie = loginAndGetCookie("alice@example.com", "s3cret");
 
         webTestClient.post().uri("/auth/logout")
                 .cookie("sso_refresh", v1Cookie)
@@ -520,8 +518,8 @@ class AuthCenterIntegrationTest {
     @Test
     void refreshMultiDeviceTwoFamiliesIndependent() throws Exception {
         // Two separate "devices" log in: each gets its own cookie.
-        String deviceA = loginAndGetCookie("alice", "s3cret");
-        String deviceB = loginAndGetCookie("alice", "s3cret");
+        String deviceA = loginAndGetCookie("alice@example.com", "s3cret");
+        String deviceB = loginAndGetCookie("alice@example.com", "s3cret");
         assertThat(deviceA).isNotEqualTo(deviceB);
 
         // Device A rotates.
@@ -552,18 +550,17 @@ class AuthCenterIntegrationTest {
      * that pins down the previous bypass-era behaviour where any
      * cookie yielded a token for the first enabled user.
      *
-     * <p>Both alice (USER + ADMIN) and a second USER-only user are
-     * already seeded by {@link #seed()}, so this test does NOT seed
-     * an additional bob — that would collide on the unique username
-     * constraint once {@code seed()} also creates a bob for the
-     * /getUsersSSO tests. The "first in the DB" assertion still
-     * holds because alice is the alphabetically-later user so bob
-     * would be the natural "first" pick for any buggy
-     * findByUsername(...).findFirst() shortcut.
+     * <p>Both alice (USER + ADMIN) and bob (USER only) are already
+     * seeded by {@link #seed()}, so this test does NOT seed an
+     * additional user — that would collide on the unique email
+     * constraint. The "first in the DB" assertion still holds
+     * because alice is the alphabetically-later user so bob would
+     * be the natural "first" pick for any buggy
+     * findByEmail(...).findFirst() shortcut.
      */
     @Test
     void refreshReturnsTokenForCorrectUser() throws Exception {
-        String aliceCookie = loginAndGetCookie("alice", "s3cret");
+        String aliceCookie = loginAndGetCookie("alice@example.com", "s3cret");
         FluxExchangeResult<Void> rotated = webTestClient.post().uri("/auth/refresh")
                 .cookie("sso_refresh", aliceCookie)
                 .exchange()
@@ -575,28 +572,15 @@ class AuthCenterIntegrationTest {
 
         // Decode the JWT payload (middle segment) — we don't verify
         // the signature here, that's the job of JwtTokenService;
-        // we only check the sub claim carries "alice".
+        // we only check the sub claim carries alice's email (the
+        // login identifier since V12).
         String[] parts = newToken.split("\\.");
         assertThat(parts).hasSize(3);
         String payloadJson = new String(java.util.Base64.getUrlDecoder()
                 .decode(parts[1]), StandardCharsets.UTF_8);
         JsonNode claims = mapper.readTree(payloadJson);
-        assertThat(claims.get("sub").asText()).isEqualTo("alice");
+        assertThat(claims.get("sub").asText()).isEqualTo("alice@example.com");
     }
-
-    // NOTE: the two "store unavailable" tests originally planned
-    // for this section (refreshWhenRedisIsUnavailableReturns401
-    // and loginWhenRedisIsUnavailableReturns503) are covered by
-    // the smoke script in admin-ui/scripts/smoke-auth-refresh.sh
-    // (Commit 9) against the live stack. Driving them as Spring
-    // integration tests would require stopping the shared
-    // Testcontainers Redis container or wiring a fake bean that
-    // bypasses Lettuce, both of which add significant test
-    // infrastructure for a single happy-path / sad-path pair. The
-    // fail-closed behaviour is exercised by the production code
-    // paths visible in JsonLoginFilter (503 on mint failure) and
-    // RefreshController (401 store_unavailable on rotate
-    // Unavailable outcome).
 
     /* ====================== helpers ====================== */
 
@@ -612,11 +596,11 @@ class AuthCenterIntegrationTest {
         return setCookie.substring(eq + 1, semi);
     }
 
-    private String loginAndGetToken(String username, String password) throws Exception {
+    private String loginAndGetToken(String email, String password) throws Exception {
         byte[] bodyBytes = webTestClient.post().uri("/login")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(mapper.writeValueAsString(
-                        Map.of("username", username, "password", password)))
+                        Map.of("email", email, "password", password)))
                 .exchange()
                 .expectStatus().isEqualTo(HttpStatus.OK)
                 .returnResult(Void.class)
@@ -629,10 +613,10 @@ class AuthCenterIntegrationTest {
      * cookie the server set. Used by the rotation / reuse /
      * multi-device tests that need to drive the refresh flow.
      */
-    private String loginAndGetCookie(String username, String password) {
+    private String loginAndGetCookie(String email, String password) {
         FluxExchangeResult<Void> result = webTestClient.post().uri("/login")
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"username\":\"" + username
+                .bodyValue("{\"email\":\"" + email
                         + "\",\"password\":\"" + password + "\"}")
                 .exchange()
                 .expectStatus().isEqualTo(HttpStatus.OK)

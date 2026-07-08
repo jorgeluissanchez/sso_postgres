@@ -241,14 +241,16 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      # Bootstrap admin
+      # Bootstrap admin. Post-V12 the seed key is the email
+      # (the legacy SSO_ADMIN_USERNAME is no longer
+      # consumed directly; application.yml falls back to it
+      # for backwards compat with old .env files).
       SSO_BOOTSTRAP_ENABLED: ${SSO_BOOTSTRAP_ENABLED}
-      SSO_ADMIN_USERNAME: ${SSO_ADMIN_USERNAME}
-      SSO_ADMIN_PASSWORD: ${SSO_ADMIN_PASSWORD}
       SSO_ADMIN_EMAIL: ${SSO_ADMIN_EMAIL}
+      SSO_ADMIN_PASSWORD: ${SSO_ADMIN_PASSWORD}
+      SSO_CORS_ALLOWED_ORIGINS: ${SSO_CORS_ALLOWED_ORIGINS:-http://localhost:8080,http://localhost:5173}
       # Observability: push OTLP to Alloy
       OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
-      SSO_CORS_ALLOWED_ORIGINS: ${SSO_CORS_ALLOWED_ORIGINS:-http://localhost:8080,http://localhost:5173}
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8081; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
@@ -492,15 +494,16 @@ services:
     depends_on:
       flyway:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
       eurekaserver:
         condition: service_started
     environment:
-      # Neon cloud DB — same pattern as auth-center / sso-admin.
-      SPRING_DATASOURCE_URL: "jdbc:postgresql://${DB_URL}/${DB_NAME}?sslmode=${DB_SSLMODE}&channel_binding=${DB_CHANNEL_BINDING}"
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
+      DB_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
       EUREKA_URL: "http://eurekaserver:8761/eureka"
       # RabbitMQ
       RABBITMQ_HOST: rabbitmq
@@ -525,8 +528,6 @@ services:
       EMAILJS_PUBLIC_KEY: ${EMAILJS_PUBLIC_KEY:-}
       EMAILJS_PRIVATE_KEY: ${EMAILJS_PRIVATE_KEY:-}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
-      # Observability: push OTLP to Alloy
-      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8085; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
@@ -595,8 +596,6 @@ services:
       # are NOT prefixed, so the gateway base URL plus
       # the literal /getQuery path resolves them.
       QUERY_CATALOG_BASE_URL: "http://sso-api-gateway:8080/sso-admin"
-      # Observability: push OTLP to Alloy
-      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8084; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
@@ -704,8 +703,6 @@ services:
       # container as JWT_SECRET env var. Must match the
       # secret auth-center uses to sign tokens.
       DOCKER_JWT_SECRET: ${JWT_SECRET}
-      # Observability: push OTLP to Alloy
-      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
     healthcheck:
       # The provisioner image installs curl (it talks to
       # the Docker socket via curl --unix-socket) but not

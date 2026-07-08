@@ -20,11 +20,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -42,6 +40,10 @@ import static org.mockito.Mockito.when;
  * NotificationEventPublisher) are mocked — the goal is to verify
  * the business rules in isolation, not the JPA layer (covered by
  * the integration test).
+ *
+ * <p>Post-V12, the {@code username} column is gone; the create
+ * and update flows operate on email + numeric {@code id}
+ * respectively. All references here match that model.
  */
 @ExtendWith(MockitoExtension.class)
 class UserAdminServiceTest {
@@ -57,12 +59,11 @@ class UserAdminServiceTest {
 
     private Role adminRole;
 
+    private static final String ALICE_EMAIL = "alice@example.com";
+
     @BeforeEach
     void setUp() {
         adminRole = new Role("ADMIN", "Administrator");
-        // EmailProperties is a Spring-bound record; tests don't
-        // load application.yml, so we wire the URLs the service
-        // needs for activation/restore password tokens.
         // EmailProperties is a Spring-bound record; tests don't
         // load application.yml, so we wire the URLs the service
         // needs for activation/restore password tokens. Field
@@ -85,48 +86,33 @@ class UserAdminServiceTest {
     /* ====================== createAccount ====================== */
 
     @Test
-    void createAccountRejectsDuplicateUsername() {
-        when(userRepository.existsByUsername("alice")).thenReturn(true);
+    void createAccountRejectsDuplicateEmail() {
+        when(userRepository.existsByEmail(ALICE_EMAIL)).thenReturn(true);
 
         CreateAccountRequest req = new CreateAccountRequest(
-                "Alice", "alice", "alice@example.com",
-                "password", null, List.of());
+                "Alice", ALICE_EMAIL, List.of());
 
         assertThatThrownBy(() -> service.createAccount(req))
                 .isInstanceOf(UserDuplicateException.class)
-                .hasMessageContaining("alice");
+                .hasMessageContaining(ALICE_EMAIL);
         verify(userRepository, never()).save(any());
     }
 
     @Test
     void createAccountRejectsInvalidEmail() {
-        when(userRepository.existsByUsername("alice")).thenReturn(false);
-
+        // No when() — the email-format check runs BEFORE the
+        // existsByEmail call, so a strict stub on the repository
+        // would trip UnnecessaryStubbingException.
         CreateAccountRequest req = new CreateAccountRequest(
-                "Alice", "alice", "not-an-email",
-                "password", null, List.of());
+                "Alice", "not-an-email", List.of());
 
         assertThatThrownBy(() -> service.createAccount(req))
                 .isInstanceOf(EmailInvalidException.class);
     }
 
     @Test
-    void createAccountRejectsMismatchedPasswordConfirm() {
-        when(userRepository.existsByUsername("alice")).thenReturn(false);
-
-        CreateAccountRequest req = new CreateAccountRequest(
-                "Alice", "alice", "alice@example.com",
-                "password", "DIFFERENT", List.of());
-
-        assertThatThrownBy(() -> service.createAccount(req))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("match");
-    }
-
-    @Test
     void createAccountSucceedsAndSendsActivationEmail() {
-        when(userRepository.existsByUsername("alice")).thenReturn(false);
-        when(passwordEncoder.encode("password")).thenReturn("$2a$10$hashed");
+        when(userRepository.existsByEmail(ALICE_EMAIL)).thenReturn(false);
         when(tokenService.issueActivationToken(any(User.class))).thenReturn("tok-123");
         when(userRepository.save(any(User.class))).thenAnswer(inv -> {
             User u = inv.getArgument(0);
@@ -135,16 +121,21 @@ class UserAdminServiceTest {
         });
 
         CreateAccountRequest req = new CreateAccountRequest(
-                "Alice Example", "alice", "alice@example.com",
-                "password", "password", List.of("ADMIN"));
+                "Alice Example", ALICE_EMAIL, List.of("ADMIN"));
 
         when(roleRepository.findByName("ADMIN")).thenReturn(Optional.of(adminRole));
 
         UserResponse resp = service.createAccount(req);
 
         assertThat(resp.id()).isEqualTo(7L);
-        assertThat(resp.username()).isEqualTo("alice");
+        assertThat(resp.email()).isEqualTo(ALICE_EMAIL);
         assertThat(resp.roleNames()).containsExactly("ADMIN");
+
+        // createAccount does NOT encode a password — that's
+        // activateAccount's job. Encoding here would be a leak
+        // of the admin's eventual obligation onto a code path
+        // that shouldn't be touching the encoder at all.
+        verify(passwordEncoder, never()).encode(anyString());
 
         // Token must be issued exactly once, and the activation
         // event is published via NotificationEventPublisher
@@ -154,7 +145,7 @@ class UserAdminServiceTest {
         verify(events).publish(
                 eq("email"),
                 eq("7"),
-                eq("alice@example.com"),
+                eq(ALICE_EMAIL),
                 eq("account-activation"),
                 any(),
                 any());
@@ -162,14 +153,12 @@ class UserAdminServiceTest {
 
     @Test
     void createAccountSkipsRoleLookupWhenRoleListEmpty() {
-        when(userRepository.existsByUsername("alice")).thenReturn(false);
-        when(passwordEncoder.encode(anyString())).thenReturn("h");
+        when(userRepository.existsByEmail(ALICE_EMAIL)).thenReturn(false);
         when(tokenService.issueActivationToken(any())).thenReturn("tok");
         when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CreateAccountRequest req = new CreateAccountRequest(
-                "Alice", "alice", "alice@example.com",
-                "password", null, List.of());
+                "Alice", ALICE_EMAIL, List.of());
 
         UserResponse resp = service.createAccount(req);
 
@@ -178,29 +167,43 @@ class UserAdminServiceTest {
     }
 
     @Test
-    void createAccountSkipsEmailCheckWhenPasswordConfirmNull() {
-        // passwordConfirm is null — only the @NotBlank on password matters.
-        when(userRepository.existsByUsername("alice")).thenReturn(false);
-        when(passwordEncoder.encode(anyString())).thenReturn("h");
+    void createAccountLeavesPasswordNullUntilActivation() {
+        // The user.password column is intentionally null right
+        // after createAccount — activation (POST /activateAccount
+        // → UserAdminService.activateAccount) is the only path
+        // that ever BCrypts and stamps it. Pin the behaviour so
+        // no future refactor quietly re-adds an admin-typed
+        // password.
+        when(userRepository.existsByEmail(ALICE_EMAIL)).thenReturn(false);
         when(tokenService.issueActivationToken(any())).thenReturn("tok");
-        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(userRepository.save(any())).thenAnswer(inv -> {
+            User u = inv.getArgument(0);
+            u.setId(7L);
+            return u;
+        });
 
         CreateAccountRequest req = new CreateAccountRequest(
-                "Alice", "alice", "alice@example.com",
-                "password", null, List.of());
+                "Alice", ALICE_EMAIL, List.of());
 
-        UserResponse resp = service.createAccount(req);
-        assertThat(resp.username()).isEqualTo("alice");
+        service.createAccount(req);
+
+        // Capture the entity that createAccount was about to save
+        // and assert the password column was left null.
+        ArgumentCaptor<User> saved =
+                ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(saved.capture());
+        assertThat(saved.getValue().getPassword()).isNull();
+        verify(passwordEncoder, never()).encode(anyString());
     }
 
     /* ====================== updateAccount ====================== */
 
     @Test
     void updateAccountRejectsUnknownUser() {
-        when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
+        when(userRepository.findById(999L)).thenReturn(Optional.empty());
 
         UpdateAccountRequest req = new UpdateAccountRequest(
-                "ghost", "New", null, null, null, null);
+                /* id */ 999L, "New", null, null, null, null);
 
         assertThatThrownBy(() -> service.updateAccount(req))
                 .isInstanceOf(NotFoundException.class);
@@ -210,20 +213,19 @@ class UserAdminServiceTest {
     void updateAccountAppliesNonNullFieldsAndReplacesRoles() {
         User existing = new User();
         existing.setId(7L);
-        existing.setUsername("alice");
-        existing.setFullName("Old Name");
         existing.setEmail("old@example.com");
+        existing.setFullName("Old Name");
         existing.setActive(true);
         existing.addRole(adminRole);
 
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(existing));
+        when(userRepository.findById(7L)).thenReturn(Optional.of(existing));
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
         Role userRole = new Role("USER", "regular");
         when(roleRepository.findByName("USER")).thenReturn(Optional.of(userRole));
 
         UpdateAccountRequest req = new UpdateAccountRequest(
-                "alice", "New Name", "new@example.com", false, null, List.of("USER"));
+                /* id */ 7L, "New Name", "new@example.com", false, null, List.of("USER"));
 
         UserResponse resp = service.updateAccount(req);
 
@@ -242,13 +244,13 @@ class UserAdminServiceTest {
     void updateAccountWithNullRoleNamesLeavesRolesUntouched() {
         User existing = new User();
         existing.setId(7L);
-        existing.setUsername("alice");
+        existing.setEmail("alice@example.com");
         existing.addRole(adminRole);
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(existing));
+        when(userRepository.findById(7L)).thenReturn(Optional.of(existing));
         when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         UpdateAccountRequest req = new UpdateAccountRequest(
-                "alice", null, null, null, null, null);
+                /* id */ 7L, null, null, null, null, null);
 
         UserResponse resp = service.updateAccount(req);
         assertThat(resp.roleNames()).containsExactly("ADMIN");
@@ -267,7 +269,7 @@ class UserAdminServiceTest {
     @Test
     void activateAccountEncodesPasswordAndEnablesUser() {
         User u = new User();
-        u.setUsername("alice");
+        u.setEmail("alice@example.com");
         u.setActive(false);
         u.setEnabled(false);
         when(tokenService.consumeActivationToken("tok")).thenReturn(u);
@@ -297,7 +299,6 @@ class UserAdminServiceTest {
     @Test
     void forgotPasswordIssuesTokenAndEmailsWhenKnown() {
         User u = new User();
-        u.setUsername("alice");
         u.setEmail("alice@example.com");
         when(userRepository.findAll()).thenReturn(List.of(u));
         when(tokenService.issueRestoreToken(u)).thenReturn("rtok");
@@ -324,25 +325,25 @@ class UserAdminServiceTest {
         assertThat(p.get("resetLink").toString()).contains("rtok");
     }
 
-    /* ====================== getRolesByUsername ====================== */
+    /* ====================== getRolesByEmail ====================== */
 
     @Test
-    void getRolesByUsernameReturnsNamesList() {
+    void getRolesByEmailReturnsNamesList() {
         User u = new User();
-        u.setUsername("alice");
+        u.setEmail("alice@example.com");
         u.addRole(new Role("ADMIN", null));
         u.addRole(new Role("USER", null));
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(u));
+        when(userRepository.findByEmail("alice@example.com")).thenReturn(Optional.of(u));
 
-        List<String> roles = service.getRolesByUsername("alice");
+        List<String> roles = service.getRolesByEmail("alice@example.com");
 
         assertThat(roles).containsExactlyInAnyOrder("ADMIN", "USER");
     }
 
     @Test
-    void getRolesByUsernameThrowsWhenMissing() {
-        when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> service.getRolesByUsername("ghost"))
+    void getRolesByEmailThrowsWhenMissing() {
+        when(userRepository.findByEmail("ghost@example.com")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.getRolesByEmail("ghost@example.com"))
                 .isInstanceOf(NotFoundException.class);
     }
 

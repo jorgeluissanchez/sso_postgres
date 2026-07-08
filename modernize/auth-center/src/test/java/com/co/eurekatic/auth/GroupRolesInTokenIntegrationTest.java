@@ -111,7 +111,6 @@ class GroupRolesInTokenIntegrationTest {
         groupRepository.save(ops);
 
         User bob = new User();
-        bob.setUsername("bob");
         bob.setEmail("bob@example.com");
         bob.setFullName("Bob Example");
         bob.setPassword(passwordEncoder.encode("s3cret"));
@@ -130,7 +129,7 @@ class GroupRolesInTokenIntegrationTest {
     void loginJwtIncludesRolesGrantedOnlyViaGroup() throws Exception {
         byte[] bodyBytes = webTestClient.post().uri("/login")
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"username\":\"bob\",\"password\":\"s3cret\"}")
+                .bodyValue("{\"email\":\"bob@example.com\",\"password\":\"s3cret\"}")
                 .exchange()
                 .expectStatus().isEqualTo(HttpStatus.OK)
                 .returnResult(Void.class)

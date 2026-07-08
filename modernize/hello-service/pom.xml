@@ -55,11 +55,11 @@
             trust boundary.
         -->
 
-        <!-- @WebFluxTest slice. Spring Boot 4.0 modularized the test
-             slices out of spring-boot-test-autoconfigure into per-tech
-             modules, and this one is NOT transitive of
-             spring-boot-starter-test, so declare it explicitly.
-             Version managed by the Spring Boot BOM. -->
+        <!-- @WebFluxTest moved out of spring-boot-test-autoconfigure
+             and into its own artifact in Spring Boot 4 (now
+             org.springframework.boot.webflux.test.autoconfigure.WebFluxTest).
+             spring-boot-starter-test (inherited from the parent pom)
+             no longer pulls it in transitively. Test scope only. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-webflux-test</artifactId>

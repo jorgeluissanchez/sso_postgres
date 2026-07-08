@@ -162,7 +162,6 @@ class SsoAdminIntegrationTest {
         roleRepository.save(admin);
 
         User root = new User();
-        root.setUsername("root");
         root.setEmail("root@example.com");
         root.setFullName("Root Admin");
         root.setPassword(passwordEncoder.encode("r00t"));
@@ -205,7 +204,7 @@ class SsoAdminIntegrationTest {
 
     @Test
     void getUsersReturnsSeededAdmin() {
-        String token = tokenFor("root", "ADMIN");
+        String token = tokenFor("root@example.com", "ADMIN");
 
         client.get().uri("/getUsers")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -215,7 +214,10 @@ class SsoAdminIntegrationTest {
                 .value(jsonBody(arr -> {
                     assertThat(arr.isArray()).isTrue();
                     assertThat(arr).hasSize(1);
-                    assertThat(arr.get(0).get("username").asText()).isEqualTo("root");
+                    // UserResponse no longer carries `username` since
+                    // the V12 migration (email IS the login identifier).
+                    assertThat(arr.get(0).get("email").asText()).isEqualTo("root@example.com");
+                    assertThat(arr.get(0).get("fullName").asText()).isEqualTo("Root Admin");
                     // The password is NEVER exposed in the response.
                     assertThat(arr.get(0).has("password")).isFalse();
                 }));
@@ -223,13 +225,14 @@ class SsoAdminIntegrationTest {
 
     @Test
     void createAccountPersistsUserWithDisabledFlagAndSendsEmail() throws Exception {
-        String token = tokenFor("root", "ADMIN");
+        String token = tokenFor("root@example.com", "ADMIN");
+        // Admin no longer types a password on create — the user
+        // sets one by clicking the activation link. The wire body
+        // (post-V12) is {fullName, email, roleNames} — username is
+        // gone since email IS the login identifier.
         String body = mapper.writeValueAsString(Map.of(
                 "fullName", "Alice Example",
-                "username", "alice",
                 "email", "alice@example.com",
-                "password", "s3cret",
-                "passwordConfirm", "s3cret",
                 "roleNames", List.of("ADMIN")
         ));
 
@@ -241,18 +244,17 @@ class SsoAdminIntegrationTest {
                 .expectStatus().isCreated()
                 .expectBody(byte[].class)
                 .value(jsonBody(json -> {
-                    assertThat(json.get("username").asText()).isEqualTo("alice");
+                    assertThat(json.get("email").asText()).isEqualTo("alice@example.com");
                     assertThat(json.get("active").asBoolean()).isTrue();
                     assertThat(json.get("ldap").asBoolean()).isFalse();
                 }));
 
-        User stored = userRepository.findByUsername("alice").orElseThrow();
+        User stored = userRepository.findByEmail("alice@example.com").orElseThrow();
         // Until the activation link is clicked, the user cannot log in.
         assertThat(stored.isEnabled()).isFalse();
         assertThat(stored.getTokenActivation()).isNotBlank();
-        // Password was BCrypted, not stored as plaintext.
-        assertThat(stored.getPassword()).isNotEqualTo("s3cret");
-        assertThat(passwordEncoder.matches("s3cret", stored.getPassword())).isTrue();
+        // No password yet — the user sets one at /activateAccount.
+        assertThat(stored.getPassword()).isNull();
 
         // Wire-2: createAccount publishes the activation event via
         // NotificationEventPublisher → notification-service renders
@@ -270,13 +272,11 @@ class SsoAdminIntegrationTest {
     }
 
     @Test
-    void createAccountRejectsDuplicateUsernameWith409() throws Exception {
-        String token = tokenFor("root", "ADMIN");
+    void createAccountRejectsDuplicateEmailWith409() throws Exception {
+        String token = tokenFor("root@example.com", "ADMIN");
         String body = mapper.writeValueAsString(Map.of(
                 "fullName", "Another Root",
-                "username", "root",
-                "email", "other@example.com",
-                "password", "s3cret"
+                "email", "root@example.com"
         ));
 
         client.post().uri("/createAccount")
@@ -292,12 +292,10 @@ class SsoAdminIntegrationTest {
 
     @Test
     void createAccountRejectsInvalidEmailWith422() throws Exception {
-        String token = tokenFor("root", "ADMIN");
+        String token = tokenFor("root@example.com", "ADMIN");
         String body = mapper.writeValueAsString(Map.of(
                 "fullName", "Bad Email",
-                "username", "badmail",
-                "email", "not-an-email",
-                "password", "s3cret"
+                "email", "not-an-email"
         ));
 
         client.post().uri("/createAccount")
@@ -310,12 +308,14 @@ class SsoAdminIntegrationTest {
 
     @Test
     void activateAccountEnablesUserWithoutAuth() throws Exception {
-        // First, create a user — capture the activation token via the
-        // mock EmailService argument.
-        String token = tokenFor("root", "ADMIN");
+        // First, create a user — capture the activation token via
+        // the user row (tokenActivation column).
+        String token = tokenFor("root@example.com", "ADMIN");
+        // Wire body has NO password, NO username — admin types
+        // fullName + email; the user sets the password via the
+        // activation call below.
         String body = mapper.writeValueAsString(Map.of(
-                "fullName", "Bob", "username", "bob", "email", "bob@example.com",
-                "password", "s3cret"));
+                "fullName", "Bob", "email", "bob@example.com"));
         client.post().uri("/createAccount")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -323,7 +323,7 @@ class SsoAdminIntegrationTest {
                 .exchange()
                 .expectStatus().isCreated();
 
-        User created = userRepository.findByUsername("bob").orElseThrow();
+        User created = userRepository.findByEmail("bob@example.com").orElseThrow();
         String activationToken = created.getTokenActivation();
         assertThat(activationToken).isNotBlank();
 
@@ -340,7 +340,7 @@ class SsoAdminIntegrationTest {
                 .exchange()
                 .expectStatus().isOk();
 
-        User after = userRepository.findByUsername("bob").orElseThrow();
+        User after = userRepository.findByEmail("bob@example.com").orElseThrow();
         assertThat(after.isEnabled()).isTrue();
         assertThat(after.isActive()).isTrue();
         // Token column cleared on use — cannot be replayed.
@@ -392,7 +392,6 @@ class SsoAdminIntegrationTest {
         // resetLink query string. We extract it back out via the
         // captor.
         User u = new User();
-        u.setUsername("carol");
         u.setEmail("carol@example.com");
         u.setFullName("Carol");
         u.setPassword(passwordEncoder.encode("oldpass1"));
@@ -431,7 +430,7 @@ class SsoAdminIntegrationTest {
                 .exchange()
                 .expectStatus().isOk();
 
-        User after = userRepository.findByUsername("carol").orElseThrow();
+        User after = userRepository.findByEmail("carol@example.com").orElseThrow();
         // Restore does NOT touch enabled/active (only activate does),
         // but it MUST clear the restore token column to enforce
         // single-use semantics.
@@ -480,7 +479,7 @@ class SsoAdminIntegrationTest {
 
     @Test
     void roleCreateAndListRoundTrip() throws Exception {
-        String token = tokenFor("root", "ADMIN");
+        String token = tokenFor("root@example.com", "ADMIN");
 
         client.post().uri("/role/createRole")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -509,7 +508,7 @@ class SsoAdminIntegrationTest {
 
     @Test
     void groupCreateAndList() throws Exception {
-        String token = tokenFor("root", "ADMIN");
+        String token = tokenFor("root@example.com", "ADMIN");
 
         client.post().uri("/group")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -542,7 +541,7 @@ class SsoAdminIntegrationTest {
      */
     @Test
     void groupUpdateRenamesInPlaceById() throws Exception {
-        String token = tokenFor("root", "ADMIN");
+        String token = tokenFor("root@example.com", "ADMIN");
 
         byte[] created = client.post().uri("/group")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -583,7 +582,7 @@ class SsoAdminIntegrationTest {
 
     @Test
     void groupUpdateRejectsRenameOntoAnotherGroupsName() throws Exception {
-        String token = tokenFor("root", "ADMIN");
+        String token = tokenFor("root@example.com", "ADMIN");
 
         client.post().uri("/group")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -619,7 +618,7 @@ class SsoAdminIntegrationTest {
 
     @Test
     void microserviceCreateAndListRoundTrip() throws Exception {
-        String token = tokenFor("root", "ADMIN");
+        String token = tokenFor("root@example.com", "ADMIN");
         String body = mapper.writeValueAsString(Map.of(
                 "serviceId", "users-svc",
                 "description", "Users microservice",
@@ -654,7 +653,7 @@ class SsoAdminIntegrationTest {
 
     @Test
     void microserviceDuplicateServiceIdReturns409() throws Exception {
-        String token = tokenFor("root", "ADMIN");
+        String token = tokenFor("root@example.com", "ADMIN");
         String body = mapper.writeValueAsString(Map.of("serviceId", "dup"));
 
         client.post().uri("/microservice/save")
@@ -677,7 +676,7 @@ class SsoAdminIntegrationTest {
 
     @Test
     void endpointCreateBindMicroserviceAndCheckEndpoint() throws Exception {
-        String token = tokenFor("root", "ADMIN");
+        String token = tokenFor("root@example.com", "ADMIN");
 
         // Create a microservice to bind to.
         EntityExchangeResult<byte[]> msResult = client.post().uri("/microservice/save")
@@ -727,7 +726,7 @@ class SsoAdminIntegrationTest {
 
     @Test
     void endpointDuplicatePathMethodDescriptionReturns409() throws Exception {
-        String token = tokenFor("root", "ADMIN");
+        String token = tokenFor("root@example.com", "ADMIN");
         String body = mapper.writeValueAsString(Map.of(
                 "method", "GET", "path", "/dup", "description", "D", "numberParams", 0));
 
@@ -748,7 +747,7 @@ class SsoAdminIntegrationTest {
 
     @Test
     void endpointBindRoleAndCheckedListing() throws Exception {
-        String token = tokenFor("root", "ADMIN");
+        String token = tokenFor("root@example.com", "ADMIN");
 
         EntityExchangeResult<byte[]> epResult = client.post().uri("/endpoint/save")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -782,7 +781,7 @@ class SsoAdminIntegrationTest {
 
     @Test
     void routeCreateWithLegacyZeroParentNormalizesToNull() throws Exception {
-        String token = tokenFor("root", "ADMIN");
+        String token = tokenFor("root@example.com", "ADMIN");
         String body = mapper.writeValueAsString(Map.of(
                 "name", "Home",
                 "path", "/home",
@@ -815,7 +814,7 @@ class SsoAdminIntegrationTest {
 
     @Test
     void routeBindRoleAndCheckedListing() throws Exception {
-        String token = tokenFor("root", "ADMIN");
+        String token = tokenFor("root@example.com", "ADMIN");
 
         EntityExchangeResult<byte[]> created = client.post().uri("/route/save")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -867,7 +866,7 @@ class SsoAdminIntegrationTest {
 
         // Caller "alice" has USER only — none of the bound
         // roles for any of the seeded queries.
-        String userToken = tokenFor("alice", "USER");
+        String userToken = tokenFor("alice@example.com", "USER");
 
         // Bound to ADMIN, alice is not ADMIN → 403.
         client.get().uri(uri -> uri.path("/getQuery")
@@ -921,7 +920,7 @@ class SsoAdminIntegrationTest {
 
         // Alice has USER — not ADMIN — so the role check
         // inside WriteCatalogService must reject her.
-        String userToken = tokenFor("alice", "USER");
+        String userToken = tokenFor("alice@example.com", "USER");
         client.get().uri(uri -> uri.path("/getWrite")
                         .queryParam("uuid", wd.getUuid()).build())
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + userToken)
@@ -929,7 +928,7 @@ class SsoAdminIntegrationTest {
                 .expectStatus().isForbidden();
 
         // Root has ADMIN — the bound role matches.
-        String adminToken = tokenFor("root", "ADMIN");
+        String adminToken = tokenFor("root@example.com", "ADMIN");
         client.get().uri(uri -> uri.path("/getWrite")
                         .queryParam("uuid", wd.getUuid()).build())
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
