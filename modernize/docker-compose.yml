@@ -840,6 +840,10 @@ services:
       - tempo
 
 volumes:
+  postgres-data:
+    # Named volume keeps the database across `docker compose down`
+    # but a `docker compose down -v` clears it (handy for dev).
+    name: sso-postgres-data
   rabbitmq-data:
     # Persists the broker's mnesia directory (durable queues,
     # exchanges, persistent messages) across `docker compose down`.
