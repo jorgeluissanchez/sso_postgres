@@ -30,6 +30,16 @@ export function useCreateGroup() {
   });
 }
 
+export function useUpdateGroup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: GroupRequest) => groupsApi.update(body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: groupKeys.list() });
+    },
+  });
+}
+
 export function useBindUserGroup() {
   const qc = useQueryClient();
   return useMutation({

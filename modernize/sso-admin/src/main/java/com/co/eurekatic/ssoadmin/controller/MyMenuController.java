@@ -5,6 +5,7 @@ import com.co.eurekatic.ssoadmin.service.MyMenuService;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -33,6 +34,18 @@ import java.util.List;
  * Cache headers (ETag / Cache-Control) are intentionally
  * NOT set here — when the user gets a role-rebinding,
  * admin-ui refetches and sees the new menu.
+ *
+ * <p>Optional {@code ?app=<name>} query parameter scopes the
+ * returned list to routes of a single
+ * {@link com.co.eurekatic.common.entity.App}. The SPA bundles
+ * {@code VITE_APP_NAME} at build time and forwards the value
+ * here so each deployment only ever shows the sidebar of its
+ * own app. Callers that omit the param (legacy clients, the
+ * smoke tests, multi-tenant menu editors) get the union
+ * across every app the caller's roles grant — back-compat
+ * preserved exactly. Unknown / blank {@code app} values are
+ * normalized in the service layer to {@code 200 + []}, again
+ * per the "what can I see?" contract.
  */
 @RestController
 public class MyMenuController {
@@ -44,8 +57,15 @@ public class MyMenuController {
     }
 
     @GetMapping("/myMenu")
-    public List<RouteResponse> myMenu() {
+    public List<RouteResponse> myMenu(
+            @RequestParam(required = false) String app) {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        return service.forCaller(auth);
+        // Trim in the controller so the service's short-circuit
+        // logic only needs to handle null + non-blank; saves
+        // re-trimming inside the hot query path.
+        String trimmed = app == null ? null : app.trim();
+        return trimmed == null || trimmed.isEmpty()
+                ? service.forCaller(auth)
+                : service.forCaller(auth, trimmed);
     }
 }

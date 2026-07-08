@@ -4,9 +4,11 @@ import com.co.eurekatic.common.entity.Role;
 import com.co.eurekatic.common.entity.User;
 import com.co.eurekatic.common.repository.RoleRepository;
 import com.co.eurekatic.common.repository.UserRepository;
+import com.co.eurekatic.ssoadmin.config.EmailProperties;
 import com.co.eurekatic.ssoadmin.dto.CreateAccountRequest;
 import com.co.eurekatic.ssoadmin.dto.UpdateAccountRequest;
 import com.co.eurekatic.ssoadmin.dto.UserResponse;
+import com.co.eurekatic.ssoadmin.event.NotificationEventPublisher;
 import com.co.eurekatic.ssoadmin.exception.EmailInvalidException;
 import com.co.eurekatic.ssoadmin.exception.NotFoundException;
 import com.co.eurekatic.ssoadmin.exception.UserDuplicateException;
@@ -14,13 +16,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -28,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -35,9 +38,10 @@ import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for {@link UserAdminService}. All collaborators
- * (repos, password encoder, TokenService, EmailService) are
- * mocked — the goal is to verify the business rules in
- * isolation, not the JPA layer (covered by the integration test).
+ * (repos, password encoder, TokenService, EmailService,
+ * NotificationEventPublisher) are mocked — the goal is to verify
+ * the business rules in isolation, not the JPA layer (covered by
+ * the integration test).
  */
 @ExtendWith(MockitoExtension.class)
 class UserAdminServiceTest {
@@ -47,14 +51,35 @@ class UserAdminServiceTest {
     @Mock PasswordEncoder passwordEncoder;
     @Mock TokenService tokenService;
     @Mock EmailService emailService;
+    @Mock NotificationEventPublisher events;
 
-    @InjectMocks UserAdminService service;
+    UserAdminService service;
 
     private Role adminRole;
 
     @BeforeEach
     void setUp() {
         adminRole = new Role("ADMIN", "Administrator");
+        // EmailProperties is a Spring-bound record; tests don't
+        // load application.yml, so we wire the URLs the service
+        // needs for activation/restore password tokens.
+        // EmailProperties is a Spring-bound record; tests don't
+        // load application.yml, so we wire the URLs the service
+        // needs for activation/restore password tokens. Field
+        // order: from, company, appName, logoUrl, activationUrl,
+        // restoreUrl, activationTemplate, restoreTemplate.
+        EmailProperties emailProps = new EmailProperties(
+                "no-reply@example.com",
+                "Acme",
+                "SSO",
+                "https://example.com/logo.png",
+                "http://localhost/admin/activate",
+                "http://localhost/admin/restore-password",
+                "activation-account.html",
+                "restore-password-account.html");
+        service = new UserAdminService(userRepository, roleRepository,
+                passwordEncoder, tokenService, emailService,
+                emailProps, events);
     }
 
     /* ====================== createAccount ====================== */
@@ -121,9 +146,18 @@ class UserAdminServiceTest {
         assertThat(resp.username()).isEqualTo("alice");
         assertThat(resp.roleNames()).containsExactly("ADMIN");
 
-        // Email + token must be issued exactly once.
+        // Token must be issued exactly once, and the activation
+        // event is published via NotificationEventPublisher
+        // (notification-service renders + sends the email).
         verify(tokenService, times(1)).issueActivationToken(any(User.class));
-        verify(emailService, times(1)).sendActivationEmail(any(User.class), eq("tok-123"));
+        verify(emailService, never()).sendActivationEmail(any(), anyString());
+        verify(events).publish(
+                eq("email"),
+                eq("7"),
+                eq("alice@example.com"),
+                eq("account-activation"),
+                any(),
+                any());
     }
 
     @Test
@@ -271,9 +305,23 @@ class UserAdminServiceTest {
 
         service.forgotPassword("alice@example.com");
 
-        ArgumentCaptor<String> tok = ArgumentCaptor.forClass(String.class);
-        verify(emailService).sendRestorePasswordEmail(eq(u), tok.capture());
-        assertThat(tok.getValue()).isEqualTo("rtok");
+        // Restore-token must be issued, and the password-reset event
+        // is published via NotificationEventPublisher with the token
+        // embedded in the payload's resetLink.
+        verify(tokenService, times(1)).issueRestoreToken(u);
+        verify(emailService, never()).sendRestorePasswordEmail(any(), anyString());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payload =
+                ArgumentCaptor.forClass(Map.class);
+        verify(events).publish(
+                eq("email"),
+                anyString(),
+                eq("alice@example.com"),
+                eq("password-reset"),
+                payload.capture(),
+                any());
+        Map<String, Object> p = payload.getValue();
+        assertThat(p.get("resetLink").toString()).contains("rtok");
     }
 
     /* ====================== getRolesByUsername ====================== */

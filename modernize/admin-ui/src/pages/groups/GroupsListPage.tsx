@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Table, type Column } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
-import { useCreateGroup, useGroups } from "@/hooks/useGroups";
+import { useCreateGroup, useGroups, useUpdateGroup } from "@/hooks/useGroups";
 import type { GroupResponse } from "@/api/types";
 import { GroupFormDrawer } from "./GroupFormDrawer";
 import type { GroupFormValues } from "@/schemas";
@@ -10,6 +10,7 @@ import type { GroupFormValues } from "@/schemas";
 export function GroupsListPage() {
   const groups = useGroups();
   const createGroup = useCreateGroup();
+  const updateGroup = useUpdateGroup();
   const toast = useToast();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<GroupResponse | null>(null);
@@ -20,9 +21,13 @@ export function GroupsListPage() {
   }
 
   async function handleSubmit(values: GroupFormValues & { id?: number }) {
-    const { id: _id, ...body } = values;
-    await createGroup.mutateAsync(body);
-    toast.show(editing ? "Grupo actualizado" : "Grupo creado", "success");
+    if (values.id != null) {
+      await updateGroup.mutateAsync(values);
+      toast.show("Grupo actualizado", "success");
+    } else {
+      await createGroup.mutateAsync(values);
+      toast.show("Grupo creado", "success");
+    }
     closeDrawer();
   }
 

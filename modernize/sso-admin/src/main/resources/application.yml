@@ -70,6 +70,24 @@ spring:
     prefer-file-system-access: false
     default-encoding: UTF-8
 
+  # AMQP producer for notification events. sso-admin publishes
+  # to the `notifications` topic exchange; notification-service
+  # consumes per channel. Connection details match the rest of
+  # the stack — the compose env block points RABBITMQ_HOST at
+  # the `rabbitmq` service.
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASS:guest}
+    virtual-host: ${RABBITMQ_VHOST:/}
+    # Publisher confirms + returns — surface unroutable
+    # messages (typo in the routing key, exchange missing) so
+    # the operator notices instead of the message silently
+    # disappearing into the broker.
+    publisher-confirm-type: correlated
+    publisher-returns: true
+
 eureka:
   client:
     service-url:

@@ -27,6 +27,7 @@ COPY hello-service/pom.xml hello-service/
 COPY sso-admin/pom.xml sso-admin/
 COPY query-service/pom.xml query-service/
 COPY provisioner/pom.xml provisioner/
+COPY notification-service/pom.xml notification-service/
 
 # Pre-resolve dependencies (offline) so the actual build doesn't
 # re-download them on every source change. `-pl` restricts the

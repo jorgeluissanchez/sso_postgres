@@ -442,13 +442,31 @@ modernize/
 ├── api-gateway/                  # :8080 — reactive gateway (WebFlux) + serves admin-ui SPA at /admin/**
 ├── hello-service/                # :8082 — reference downstream service
 ├── sso-admin/                    # :8083 — User/Role/Group CRUD + activation (Phase 1) + Microservice/Endpoint/Route CRUD + bindings (Phase 2)
+├── query-service/                # :8084 — read-side catalog (QUERY / ROLE_QUERY / WRITE_DEFINITION / ROLE_WRITE)
+├── provisioner/                  # microservice registry provisioner (calls /sso-admin/microservices/upsertByName)
+├── notification-service/         # :8085 — multichannel (SMS / email / push) consumer from RabbitMQ, providers + circuit breakers
 ├── admin-ui/                     # React 19 SPA — built into api-gateway image (NOT a Maven module)
 └── postgres/
     └── init/
         ├── 01-create-sso-db.sh                # base users / role / role_users
         ├── 02-create-sso-admin-tables.sh      # groups / user_group (Phase 1)
-        └── 03-create-sso-admin-phase2-tables.sh # MICROSERVICE / ENDPOINT / ROUTE + joins (Phase 2)
+        ├── 03-create-sso-admin-phase2-tables.sh # MICROSERVICE / ENDPOINT / ROUTE + joins (Phase 2)
+        └── 05-create-query-tables.sh          # QUERY / ROLE_QUERY / WRITE_DEFINITION / ROLE_WRITE (query-service)
 ```
+
+## notification-service
+
+First broker-driven module. Reads `NotificationMessage` envelopes
+from the `notifications` topic exchange (one queue per channel:
+`notif.sms`, `notif.email`, `notif.push`), persists each attempt
+to `notification_log` with idempotency on `notification_id`,
+and routes through one of N providers per channel with circuit
+breakers and failover.
+
+See [`notification-service/README.md`](notification-service/README.md)
+for full architecture, env vars, Rabbit topology, provider
+configuration, and how to enable / disable providers via
+`POST /actuator/providers/refresh` (no restart).
 
 ## Security notes (for production)
 

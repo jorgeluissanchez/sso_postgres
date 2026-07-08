@@ -1,5 +1,5 @@
 -- =============================================================================
--- V8 — group_role: M:N between GROUPS and ROLE. Turns groups into RBAC
+-- V11 — group_role: M:N between GROUPS and ROLE. Turns groups into RBAC
 -- role bundles. A user's effective roles = direct roles (role_users) ∪ the
 -- roles of every group they belong to (user_group -> group_role).
 -- =============================================================================

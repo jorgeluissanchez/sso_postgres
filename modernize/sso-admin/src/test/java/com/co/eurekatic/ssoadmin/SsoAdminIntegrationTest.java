@@ -90,7 +90,12 @@ import static org.springframework.security.test.web.servlet.setup.SecurityMockMv
         // Don't run mail health probe — the fake SMTP isn't
         // actually serving, and the indicator would push the
         // /actuator/health aggregate to 503.
-        "management.health.mail.enabled=false"
+        "management.health.mail.enabled=false",
+        // Same for RabbitMQ — no broker running in this test
+        // (NotificationEventPublisher is mocked above, but the
+        // RabbitHealthIndicator talks to the ConnectionFactory
+        // bean directly, bypassing the mock).
+        "management.health.rabbit.enabled=false"
 })
 class SsoAdminIntegrationTest {
 
@@ -116,6 +121,12 @@ class SsoAdminIntegrationTest {
     // it to spring-test's bean.override.mockito package).
     @MockitoBean
     com.co.eurekatic.ssoadmin.service.EmailService emailServiceMock;
+
+    // Don't hit RabbitMQ in tests. Wire-2 wiring routes account /
+    // password flows through NotificationEventPublisher instead
+    // of EmailService — the mock receives publish() calls instead.
+    @MockitoBean
+    com.co.eurekatic.ssoadmin.event.NotificationEventPublisher notificationPublisherMock;
 
     @BeforeEach
     void setUp() {
@@ -243,8 +254,19 @@ class SsoAdminIntegrationTest {
         assertThat(stored.getPassword()).isNotEqualTo("s3cret");
         assertThat(passwordEncoder.matches("s3cret", stored.getPassword())).isTrue();
 
-        org.mockito.Mockito.verify(emailServiceMock)
-                .sendActivationEmail(any(User.class), any());
+        // Wire-2: createAccount publishes the activation event via
+        // NotificationEventPublisher → notification-service renders
+        // and sends the email. We verify the event was published;
+        // notification-service delivery is covered by its own
+        // Testcontainers suite.
+        org.mockito.Mockito.verify(notificationPublisherMock)
+                .publish(
+                        org.mockito.ArgumentMatchers.eq("email"),
+                        any(),
+                        org.mockito.ArgumentMatchers.eq("alice@example.com"),
+                        org.mockito.ArgumentMatchers.eq("account-activation"),
+                        any(),
+                        any());
     }
 
     @Test
@@ -341,11 +363,14 @@ class SsoAdminIntegrationTest {
     @Test
     void activateAccountRejectsShortPassword() throws Exception {
         // @Size(min = 6) on the TokenPasswordRequest.password field
-        // turns "123" into a 400 BEFORE the service is reached, so
-        // the existing service-level invariant (IllegalArgumentException
-        // → 400 INVALID_REQUEST) is still defended by a higher layer.
-        // This pins the controller-side validation contract that
-        // closed the GET-with-password-in-query leak surface.
+        // turns "123" into a MethodArgumentNotValidException BEFORE
+        // the service is reached, so the existing service-level
+        // invariant (IllegalArgumentException → 400 INVALID_REQUEST)
+        // is still defended by a higher layer. GlobalExceptionHandler
+        // maps all @Valid body violations to 422 (same as
+        // createAccountRejectsInvalidEmailWith422) — this pins the
+        // controller-side validation contract that closed the
+        // GET-with-password-in-query leak surface.
         String body = mapper.writeValueAsString(Map.of(
                 "token", "anything",
                 "password", "123"));
@@ -353,7 +378,7 @@ class SsoAdminIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .exchange()
-                .expectStatus().isBadRequest();
+                .expectStatus().isEqualTo(422);
     }
 
     @Test
@@ -361,8 +386,11 @@ class SsoAdminIntegrationTest {
         // Create a user directly via the repository (faster than going
         // through POST /createAccount which now mints an activation
         // token we don't need here), then trigger forgotPassword to
-        // issue a real restore token and dispatch it via the (mocked)
-        // EmailService. ArgumentCaptor pulls the token back out.
+        // issue a real restore token. Wire-2: the flow now publishes
+        // a NotificationMessage event (notification-service renders
+        // and sends the email); the token rides in the payload's
+        // resetLink query string. We extract it back out via the
+        // captor.
         User u = new User();
         u.setUsername("carol");
         u.setEmail("carol@example.com");
@@ -378,11 +406,19 @@ class SsoAdminIntegrationTest {
                 .exchange()
                 .expectStatus().isOk();
 
-        org.mockito.ArgumentCaptor<String> tok = org.mockito.ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(emailServiceMock)
-                .sendRestorePasswordEmail(org.mockito.ArgumentMatchers.eq(u), tok.capture());
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<Map<String, Object>> payload =
+                org.mockito.ArgumentCaptor.forClass(Map.class);
+        org.mockito.Mockito.verify(notificationPublisherMock)
+                .publish(
+                        org.mockito.ArgumentMatchers.eq("email"),
+                        any(),
+                        org.mockito.ArgumentMatchers.eq("carol@example.com"),
+                        org.mockito.ArgumentMatchers.eq("password-reset"),
+                        payload.capture(),
+                        any());
 
-        String restoreToken = tok.getValue();
+        String restoreToken = extractToken(payload.getValue().get("resetLink").toString());
         assertThat(restoreToken).hasSize(36); // UUID format, same as TokenService
 
         // POST + JSON body — same shape as /activateAccount.
@@ -401,6 +437,17 @@ class SsoAdminIntegrationTest {
         // single-use semantics.
         assertThat(after.getTokenRestore()).isNull();
         assertThat(passwordEncoder.matches("newpass1", after.getPassword())).isTrue();
+    }
+
+    /** Pulls the {@code token=...} query string out of the
+     * {@code resetLink} URL produced by UserAdminService.forgotPassword
+     * when wrapping the restore token in the notification payload. */
+    private static String extractToken(String url) {
+        int i = url.indexOf("token=");
+        if (i < 0) throw new AssertionError("resetLink missing token= : " + url);
+        String tail = url.substring(i + "token=".length());
+        int amp = tail.indexOf('&');
+        return amp < 0 ? tail : tail.substring(0, amp);
     }
 
     @Test
@@ -428,7 +475,7 @@ class SsoAdminIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .exchange()
-                .expectStatus().isBadRequest();
+                .expectStatus().isEqualTo(422);
     }
 
     @Test
@@ -484,6 +531,88 @@ class SsoAdminIntegrationTest {
                     assertThat(arr).hasSize(1);
                     assertThat(arr.get(0).get("memberCount").asInt()).isZero();
                 }));
+    }
+
+    /**
+     * Regression for a bug caught in review: the admin-ui edit
+     * flow used to submit renames through {@code POST /group}
+     * (name-keyed upsert), which created a duplicate group
+     * instead of renaming the original. {@code PUT
+     * /group/update} is id-keyed and must rename in place.
+     */
+    @Test
+    void groupUpdateRenamesInPlaceById() throws Exception {
+        String token = tokenFor("root", "ADMIN");
+
+        byte[] created = client.post().uri("/group")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(
+                        Map.of("name", "Ops", "description", "Operations")))
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(byte[].class)
+                .returnResult()
+                .getResponseBody();
+        long id = mapper.readTree(created).get("id").asLong();
+
+        client.put().uri("/group/update")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(
+                        Map.of("id", id, "name", "Operations", "description", "Renamed")))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(jsonBody(b -> {
+                    assertThat(b.get("id").asLong()).isEqualTo(id);
+                    assertThat(b.get("name").asText()).isEqualTo("Operations");
+                }));
+
+        // Renamed in place — still exactly one group, under the new name.
+        client.get().uri("/group")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(jsonBody(arr -> {
+                    assertThat(arr).hasSize(1);
+                    assertThat(arr.get(0).get("name").asText()).isEqualTo("Operations");
+                }));
+    }
+
+    @Test
+    void groupUpdateRejectsRenameOntoAnotherGroupsName() throws Exception {
+        String token = tokenFor("root", "ADMIN");
+
+        client.post().uri("/group")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(
+                        Map.of("name", "Ops", "description", "Operations")))
+                .exchange()
+                .expectStatus().isCreated();
+
+        byte[] financeGroup = client.post().uri("/group")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(
+                        Map.of("name", "Finance", "description", "Finance team")))
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(byte[].class)
+                .returnResult()
+                .getResponseBody();
+        long financeId = mapper.readTree(financeGroup).get("id").asLong();
+
+        // Renaming Finance to "Ops" must fail, not silently overwrite Ops.
+        client.put().uri("/group/update")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(
+                        Map.of("id", financeId, "name", "Ops", "description", "Finance team")))
+                .exchange()
+                .expectStatus().isEqualTo(409);
     }
 
     /* ====================== Phase 2: microservice / endpoint / route ====================== */

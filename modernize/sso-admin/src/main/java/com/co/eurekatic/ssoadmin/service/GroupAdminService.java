@@ -8,6 +8,7 @@ import com.co.eurekatic.common.repository.RoleRepository;
 import com.co.eurekatic.common.repository.UserRepository;
 import com.co.eurekatic.ssoadmin.dto.GroupRequest;
 import com.co.eurekatic.ssoadmin.dto.GroupResponse;
+import com.co.eurekatic.ssoadmin.exception.DuplicateException;
 import com.co.eurekatic.ssoadmin.exception.NotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -51,6 +52,31 @@ public class GroupAdminService {
                     g.setName(req.name());
                     return g;
                 });
+        group.setDescription(req.description());
+        return GroupResponse.fromEntity(groupRepository.save(group));
+    }
+
+    /**
+     * Updates an existing group by id — the admin-ui edit flow
+     * uses this instead of {@link #save}, which resolves by
+     * name and would otherwise create a duplicate row (or, on a
+     * name collision with a different group, silently overwrite
+     * it) when used to rename one.
+     */
+    @Transactional
+    public GroupResponse update(GroupRequest req) {
+        if (req.id() == null) {
+            throw new IllegalArgumentException("id is required for update");
+        }
+        Group group = groupRepository.findById(req.id())
+                .orElseThrow(() -> new NotFoundException("Group", req.id()));
+        // Allow keeping the same name; reject a rename onto a different group's name.
+        groupRepository.findByName(req.name()).ifPresent(existing -> {
+            if (!existing.getId().equals(group.getId())) {
+                throw new DuplicateException("Group", req.name());
+            }
+        });
+        group.setName(req.name());
         group.setDescription(req.description());
         return GroupResponse.fromEntity(groupRepository.save(group));
     }

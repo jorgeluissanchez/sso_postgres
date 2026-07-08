@@ -93,6 +93,7 @@ export interface GroupResponse {
 }
 
 export interface GroupRequest {
+  id?: number;
   name: string;
   description: string;
 }
@@ -251,6 +252,25 @@ export interface EndpointMicroserviceChecked {
 
 // ====================== sso-admin / route ======================
 
+/**
+ * Wire shape for a `Route` row. Mirrors the backend
+ * {@code com.co.eurekatic.ssoadmin.dto.RouteResponse} record.
+ * No `appId`/`appName` field — a route's app membership is the
+ * `app_route` M:N (a route can belong to more than one app),
+ * managed via the App edit page's route picker
+ * (`appsApi.bindRoute`/`unbindRoute`), not a single FK on Route.
+ *
+ * <p>{@code idParent} is {@code null} for roots. Legacy data
+ * may carry {@code 0} as the root sentinel; the
+ * {@link buildTree} util normalises both.
+ *
+ * <p>{@code roleIds} is the set of role ids this Route is
+ * directly bound to (the {@code ROLE_ROUTE} join table).
+ * Per-row authorization for {@code GET /sso-admin/myMenu}
+ * uses BOTH this direct binding AND the route's app_route
+ * membership → app's {@code role_app} chain — see
+ * {@code RouteRepository.findVisibleForRoles}.
+ */
 export interface RouteResponse {
   id: number;
   name: string;

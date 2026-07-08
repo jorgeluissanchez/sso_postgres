@@ -1,6 +1,5 @@
 package com.co.eurekatic.ssoadmin.dto;
 
-import com.co.eurekatic.common.entity.App;
 import com.co.eurekatic.common.entity.Route;
 
 import java.util.LinkedHashSet;
@@ -13,6 +12,13 @@ import java.util.stream.Collectors;
  * without a follow-up round-trip. {@code idParent} is null
  * for root routes (the legacy "0" sentinel is normalized away
  * on write, never echoed back).
+ *
+ * <p>No {@code appId}/{@code appName} field: a route's app
+ * membership is a {@code app_route} M:N (a route can belong to
+ * more than one app), not a single FK — see
+ * {@code AppController.getRoutesForAppChecked}/
+ * {@code AppService.bindRoute}/{@code unbindRoute} for the
+ * membership-management surface.
  */
 public record RouteResponse(
         Long id,
@@ -22,12 +28,9 @@ public record RouteResponse(
         Integer menuOrder,
         String type,
         Long idParent,
-        Long appId,
-        String appName,
         Set<Long> roleIds
 ) {
     public static RouteResponse fromEntity(Route r) {
-        App app = r.getApp();
         return new RouteResponse(
                 r.getId(),
                 r.getName(),
@@ -36,8 +39,6 @@ public record RouteResponse(
                 r.getMenuOrder(),
                 r.getType(),
                 r.getIdParent(),
-                app != null ? app.getId() : null,
-                app != null ? app.getName() : null,
                 r.getRoles().stream()
                         .map(com.co.eurekatic.common.entity.Role::getId)
                         .collect(Collectors.toCollection(LinkedHashSet::new)));

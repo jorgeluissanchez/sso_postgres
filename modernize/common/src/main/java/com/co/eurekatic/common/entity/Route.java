@@ -9,7 +9,6 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.JoinTable;
 import jakarta.persistence.ManyToMany;
-import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -74,19 +73,6 @@ public class Route {
      */
     @Column(name = "IDPARENT")
     private Long idParent;
-
-    /**
-     * "Primary" {@link App} this route belongs to (FK
-     * {@code id_app}). Nullable so existing rows aren't
-     * forced into an app; a {@code null} value just means
-     * "no primary app" (the route may still appear in apps
-     * via the {@code app_route} M:N join). The endpoint
-     * {@code GET /sso-admin/myMenu} unions both paths when
-     * resolving the per-user menu.
-     */
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "id_app")
-    private App app;
 
     /**
      * Roles that are allowed to see/use this route. Owning

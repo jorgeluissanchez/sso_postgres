@@ -253,6 +253,14 @@ services:
     build:
       context: .
       dockerfile: api-gateway/Dockerfile
+      args:
+        # Baked into the admin-ui SPA bundle at build time
+        # (api-gateway/Dockerfile stage 1 picks it up as an
+        # ARG + ENV pair). When set, the SPA sends
+        # ?app=<value> on GET /sso-admin/myMenu and the
+        # sidebar shows only the routes of that single App.
+        # Leave unset / set to "" for the un-scoped union.
+        VITE_APP_NAME: ${VITE_APP_NAME:-}
     image: eurekatic/api-gateway:1.0.0-SNAPSHOT
     container_name: sso-api-gateway
     restart: unless-stopped
@@ -344,6 +352,15 @@ services:
         # admin service starts accepting writes — otherwise
         # the first QUERY row would 503.
         condition: service_healthy
+      rabbitmq:
+        # sso-admin publishes NotificationMessage envelopes to
+        # the `notifications` topic exchange (Welcome, password
+        # reset, role assigned/revoked, deactivation, etc.).
+        # If the broker is unreachable, those calls fail-fast
+        # with a WARN — they don't block writes — but waiting
+        # until healthy avoids races with notification-service
+        # binding the queues at boot.
+        condition: service_healthy
     ports:
       - "${SSO_ADMIN_PORT:-8083}:8083"
     environment:
@@ -382,6 +399,14 @@ services:
       # React Router owns the route + form.
       SSO_ACTIVATION_URL: "http://localhost:${API_GATEWAY_PORT:-8080}/admin/activate"
       SSO_RESTORE_URL: "http://localhost:${API_GATEWAY_PORT:-8080}/admin/restore-password"
+      # RabbitMQ — sso-admin is the producer for notification-service
+      # (Welcome, password reset, role assigned/revoked, deactivation).
+      # notification-service consumes from queues bound to the
+      # `notifications` topic exchange declared by sso-admin at boot.
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: ${RABBITMQ_USER}
+      RABBITMQ_PASS: ${RABBITMQ_PASS}
       # Observability: push OTLP to Alloy
       OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
     healthcheck:
@@ -402,6 +427,102 @@ services:
     ports:
       - "${MAILHOG_SMTP_PORT:-1025}:1025"
       - "${MAILHOG_WEB_PORT:-8025}:8025"
+
+  # ===========================================================================
+  # rabbitmq — message broker for notification-service.
+  #
+  # - 3.13.7-management: stable 3.13 line (the spec target).
+  # - hostname is set explicitly so other services can resolve
+  #   it via compose DNS.
+  # - Port 15672 (admin UI) is bound to 127.0.0.1 only; port
+  #   5672 is NOT published to the host at all (per spec —
+  #   internal only).
+  # - Named volume persists the broker's mnesia across
+  #   `docker compose down` (NOT `down -v`).
+  # - Healthcheck: `rabbitmq-diagnostics -q ping` returns 0
+  #   once the broker accepts AMQP connections.
+  # ===========================================================================
+  rabbitmq:
+    image: rabbitmq:3.13.7-management
+    container_name: sso-rabbitmq
+    restart: unless-stopped
+    hostname: rabbitmq
+    mem_limit: 384m
+    mem_reservation: 256m
+    ports:
+      # Admin UI for dev only — loopback bound so it's not
+      # reachable from the LAN. http://localhost:15672 with
+      # guest/guest (override via RABBITMQ_USER / RABBITMQ_PASS).
+      - "127.0.0.1:${RABBITMQ_MGMT_PORT:-15672}:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ===========================================================================
+  # notification-service — multichannel notification consumer
+  # (email / SMS / push) wired off the rabbitmq broker above.
+  # Reachable only via the gateway's dynamic route locator
+  # (/notification-service/actuator/**). Internal-only — no
+  # host port mapping.
+  # ===========================================================================
+  notification-service:
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
+    image: eurekatic/notification-service:1.0.0-SNAPSHOT
+    container_name: sso-notification-service
+    restart: unless-stopped
+    mem_limit: 640m
+    mem_reservation: 512m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      eurekaserver:
+        condition: service_started
+    environment:
+      DB_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      EUREKA_URL: "http://eurekaserver:8761/eureka"
+      # RabbitMQ
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: ${RABBITMQ_USER}
+      RABBITMQ_PASS: ${RABBITMQ_PASS}
+      # SMTP — point at mailhog in dev. Real env vars override.
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+      # Provider credentials (env-driven). Unset in dev →
+      # providers self-disable with WARN. Set in prod.
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      VONAGE_API_KEY: ${VONAGE_API_KEY:-}
+      VONAGE_API_SECRET: ${VONAGE_API_SECRET:-}
+      SMTP_GMAIL_USER: ${SMTP_GMAIL_USER:-}
+      SMTP_GMAIL_PASS: ${SMTP_GMAIL_PASS:-}
+      SMTP_BREVO_USER: ${SMTP_BREVO_USER:-}
+      SMTP_BREVO_PASS: ${SMTP_BREVO_PASS:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAILJS_SERVICE_ID: ${EMAILJS_SERVICE_ID:-}
+      EMAILJS_PUBLIC_KEY: ${EMAILJS_PUBLIC_KEY:-}
+      EMAILJS_PRIVATE_KEY: ${EMAILJS_PRIVATE_KEY:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8085; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
 
   # ===========================================================================
   # query-service — dynamic, per-datasource instances.
@@ -643,7 +764,12 @@ services:
       - loki
 
   tempo:
-    image: grafana/tempo:latest
+    # Pinned — Tempo 3.0 removed the ingester/compactor architecture
+    # this config (and its monolithic single-binary deployment) is
+    # written for, replacing it with block-builder/live-store. 2.10.7
+    # is the last 2.x release; bumping to 3.x needs a config rewrite
+    # (see https://grafana.com/docs/tempo/latest/set-up-for-tracing/setup-tempo/migrate-to-3/).
+    image: grafana/tempo:2.10.7
     container_name: sso-tempo
     restart: unless-stopped
     mem_limit: 512m
@@ -706,6 +832,11 @@ volumes:
     # Named volume keeps the database across `docker compose down`
     # but a `docker compose down -v` clears it (handy for dev).
     name: sso-postgres-data
+  rabbitmq-data:
+    # Persists the broker's mnesia directory (durable queues,
+    # exchanges, persistent messages) across `docker compose down`.
+    # `docker compose down -v` clears it.
+    name: sso-rabbitmq-data
   tempo-data:
     name: sso-tempo-data
   mimir-data:

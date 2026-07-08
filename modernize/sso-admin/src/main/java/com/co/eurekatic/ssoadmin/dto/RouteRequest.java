@@ -17,16 +17,5 @@ public record RouteRequest(
         @NotBlank @Size(max = 500) String path,
         @Min(0)          Integer menuOrder,
         @Size(max = 50)  String type,
-        Long idParent,
-        /**
-         * Optional "primary" {@code id_app} for this route.
-         * Nullable — routes created before the
-         * {@code 06-create-app-tables} migration land with
-         * {@code app_id=null} and stay that way until an
-         * admin re-binds them. The M:N {@code app_route}
-         * join is the canonical membership; this FK is a
-         * fast lookup for "what's the home app of this
-         * route".
-         */
-        Long appId
+        Long idParent
 ) {}
