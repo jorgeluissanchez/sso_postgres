@@ -93,6 +93,7 @@ export interface GroupResponse {
 }
 
 export interface GroupRequest {
+  id?: number;
   name: string;
   description: string;
 }

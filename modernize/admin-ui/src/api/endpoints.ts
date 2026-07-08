@@ -94,6 +94,7 @@ export const rolesApi = {
 export const groupsApi = {
   list: () => apiClient.get<GroupResponse[]>("/sso-admin/group"),
   save: (body: GroupRequest) => apiClient.post<GroupResponse>("/sso-admin/group", body),
+  update: (body: GroupRequest) => apiClient.put<GroupResponse>("/sso-admin/group/update", body),
   bindUser: (userId: number, groupId: number) =>
     apiClient.post<void>("/sso-admin/group/bindUserGroup", { userId, groupId }),
 

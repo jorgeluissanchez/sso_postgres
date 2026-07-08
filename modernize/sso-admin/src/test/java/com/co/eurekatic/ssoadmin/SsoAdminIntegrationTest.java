@@ -533,6 +533,88 @@ class SsoAdminIntegrationTest {
                 }));
     }
 
+    /**
+     * Regression for a bug caught in review: the admin-ui edit
+     * flow used to submit renames through {@code POST /group}
+     * (name-keyed upsert), which created a duplicate group
+     * instead of renaming the original. {@code PUT
+     * /group/update} is id-keyed and must rename in place.
+     */
+    @Test
+    void groupUpdateRenamesInPlaceById() throws Exception {
+        String token = tokenFor("root", "ADMIN");
+
+        byte[] created = client.post().uri("/group")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(
+                        Map.of("name", "Ops", "description", "Operations")))
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(byte[].class)
+                .returnResult()
+                .getResponseBody();
+        long id = mapper.readTree(created).get("id").asLong();
+
+        client.put().uri("/group/update")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(
+                        Map.of("id", id, "name", "Operations", "description", "Renamed")))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(jsonBody(b -> {
+                    assertThat(b.get("id").asLong()).isEqualTo(id);
+                    assertThat(b.get("name").asText()).isEqualTo("Operations");
+                }));
+
+        // Renamed in place — still exactly one group, under the new name.
+        client.get().uri("/group")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(byte[].class)
+                .value(jsonBody(arr -> {
+                    assertThat(arr).hasSize(1);
+                    assertThat(arr.get(0).get("name").asText()).isEqualTo("Operations");
+                }));
+    }
+
+    @Test
+    void groupUpdateRejectsRenameOntoAnotherGroupsName() throws Exception {
+        String token = tokenFor("root", "ADMIN");
+
+        client.post().uri("/group")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(
+                        Map.of("name", "Ops", "description", "Operations")))
+                .exchange()
+                .expectStatus().isCreated();
+
+        byte[] financeGroup = client.post().uri("/group")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(
+                        Map.of("name", "Finance", "description", "Finance team")))
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(byte[].class)
+                .returnResult()
+                .getResponseBody();
+        long financeId = mapper.readTree(financeGroup).get("id").asLong();
+
+        // Renaming Finance to "Ops" must fail, not silently overwrite Ops.
+        client.put().uri("/group/update")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(
+                        Map.of("id", financeId, "name", "Ops", "description", "Finance team")))
+                .exchange()
+                .expectStatus().isEqualTo(409);
+    }
+
     /* ====================== Phase 2: microservice / endpoint / route ====================== */
 
     @Test
