@@ -11,4 +11,5 @@ target
 .claude/
 .playwright-mcp/
 **/docs/brainstorming/
+**/docs/superpowers/
 skills-lock.json
