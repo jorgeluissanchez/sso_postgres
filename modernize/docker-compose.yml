@@ -249,6 +249,14 @@ services:
       SSO_ADMIN_EMAIL: ${SSO_ADMIN_EMAIL}
       SSO_ADMIN_PASSWORD: ${SSO_ADMIN_PASSWORD}
       SSO_CORS_ALLOWED_ORIGINS: ${SSO_CORS_ALLOWED_ORIGINS:-http://localhost:8080,http://localhost:5173}
+      # Session-cache (effective roles in Redis). Shared secret
+      # must match the value sso-admin is configured with — both
+      # services read SSO_SESSION_USER_ROLES_INVALIDATION_SECRET
+      # and use it as the X-Session-Cache-Secret header value on
+      # the internal POST /internal/cache/user-roles/{email}.
+      # Empty default rejects every request (fail-closed posture
+      # on the controller side; documented in CacheAdminController).
+      SSO_SESSION_USER_ROLES_INVALIDATION_SECRET: ${SSO_SESSION_USER_ROLES_INVALIDATION_SECRET:-}
       # Observability: push OTLP to Alloy
       OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
     healthcheck:
@@ -429,6 +437,14 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # Session-cache invalidation hop — sso-admin POSTs to
+      # auth-center /internal/cache/user-roles/{email} after every
+      # role / group binding mutation. Base URL is compose-DNS by
+      # default; override for host-mode dev. Shared secret MUST
+      # match the value on auth-center (same env var name feeds
+      # both sides).
+      SSO_AUTH_CENTER_BASE_URL: ${SSO_AUTH_CENTER_BASE_URL:-http://auth-center:8081}
+      SSO_SESSION_USER_ROLES_INVALIDATION_SECRET: ${SSO_SESSION_USER_ROLES_INVALIDATION_SECRET:-}
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8083; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
