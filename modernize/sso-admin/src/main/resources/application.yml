@@ -162,6 +162,13 @@ sso:
     # relevant entry immediately on write, so this TTL is only a
     # safety net for out-of-band DB edits — doesn't need to be short.
     app-access-cache-ttl: ${SSO_ADMIN_APP_ACCESS_CACHE_TTL:5m}
+    # TTL for the "roles" cache (RoleLookupService / MyMenuService).
+    # Role count is stable; RoleAdminService evicts on every write.
+    roles-cache-ttl: ${SSO_ADMIN_ROLES_CACHE_TTL:5m}
+    # TTL for the "user-by-email" cache (UserLookupService /
+    # QueryCatalogService). Short (60s) so role/user mutations
+    # in sso-admin reflect quickly in the catalog auth check.
+    user-by-email-cache-ttl: ${SSO_ADMIN_USER_BY_EMAIL_CACHE_TTL:60s}
   email:
     # Branding + URLs for activation and restore-password emails.
     # Override per environment.
