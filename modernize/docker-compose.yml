@@ -523,6 +523,8 @@ services:
       # providers self-disable with WARN. Set in prod.
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      # Observability: push OTLP to Alloy
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
       VONAGE_API_KEY: ${VONAGE_API_KEY:-}
       VONAGE_API_SECRET: ${VONAGE_API_SECRET:-}
       SMTP_GMAIL_USER: ${SMTP_GMAIL_USER:-}
@@ -595,6 +597,8 @@ services:
       QUERY_DS_USERNAME: ${QUERY_DS_POSTGRES_USER}
       QUERY_DS_PASSWORD: ${QUERY_DS_POSTGRES_PASSWORD}
       QUERY_DS_POOL_SIZE: "10"
+      # Observability: push OTLP to Alloy
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
       # Eureka + JWT (same key auth-center uses)
       EUREKA_URL: "http://eurekaserver:8761/eureka"
       JWT_SECRET: ${JWT_SECRET}
@@ -640,6 +644,8 @@ services:
       EUREKA_URL: "http://eurekaserver:8761/eureka"
       JWT_SECRET: ${JWT_SECRET}
       QUERY_CATALOG_BASE_URL: "http://sso-api-gateway:8080/sso-admin"
+      # Observability: push OTLP to Alloy
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8084; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; grep -q UP <&3"]
       interval: 10s
@@ -709,6 +715,8 @@ services:
       # container as JWT_SECRET env var. Must match the
       # secret auth-center uses to sign tokens.
       DOCKER_JWT_SECRET: ${JWT_SECRET}
+      # Observability: push OTLP to Alloy
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
     healthcheck:
       # The provisioner image installs curl (it talks to
       # the Docker socket via curl --unix-socket) but not
