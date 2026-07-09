@@ -501,9 +501,15 @@ services:
       eurekaserver:
         condition: service_started
     environment:
-      DB_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      # Neon cloud DB (same target as auth-center / sso-admin).
+      # The local `postgres` container is used only by the
+      # RabbitMQ healthcheck chain — notification-service
+      # never opens a JDBC connection to it. Using ${DB_URL}
+      # keeps the password consistent with auth-center's.
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://${DB_URL}/${DB_NAME}?sslmode=${DB_SSLMODE}&channel_binding=${DB_CHANNEL_BINDING}"
+      DB_URL: "jdbc:postgresql://${DB_URL}/${DB_NAME}?sslmode=${DB_SSLMODE}&channel_binding=${DB_CHANNEL_BINDING}"
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
       EUREKA_URL: "http://eurekaserver:8761/eureka"
       # RabbitMQ
       RABBITMQ_HOST: rabbitmq
