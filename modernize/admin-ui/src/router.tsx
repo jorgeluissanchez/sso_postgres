@@ -1,5 +1,6 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 import { ActivatePage } from "@/auth/ActivatePage";
+import { ForgotPasswordPage } from "@/auth/ForgotPasswordPage";
 import { LoginPage } from "@/auth/LoginPage";
 import { RequireAuth } from "@/auth/RequireAuth";
 import { RestorePasswordPage } from "@/auth/RestorePasswordPage";
@@ -16,8 +17,9 @@ import { AppsListPage } from "@/pages/apps/AppsListPage";
 import { WritesListPage } from "@/pages/writes/WritesListPage";
 
 /**
- * Router. Public routes: /login, /activate (legacy top-level for
- * already-sent emails), /admin/activate and
+ * Router. Public routes: /login, /forgot-password (request a
+ * reset link — linked from LoginPage), /activate (legacy
+ * top-level for already-sent emails), /admin/activate and
  * /admin/restore-password (the SPA-under-admin paths the email
  * links now point at). Everything else under /admin is gated
  * by {@link RequireAuth}. We use the data router so loaders
@@ -32,6 +34,10 @@ import { WritesListPage } from "@/pages/writes/WritesListPage";
  */
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
+  // Step 1 of the forgot-password flow: request the reset link.
+  // Step 2 (/admin/restore-password) is where the emailed link
+  // lands and the password actually changes.
+  { path: "/forgot-password", element: <ForgotPasswordPage /> },
   // Legacy top-level route — emails sent before this branch
   // landed link here. Kept for one cycle of backward compat;
   // to be deleted once the next batch of activation emails

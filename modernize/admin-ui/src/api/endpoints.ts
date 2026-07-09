@@ -58,6 +58,15 @@ export const authApi = {
   login: (body: LoginRequest) =>
     apiClient.post<TokenResponse>("/auth/login", body, { skipAuth: true }),
   logout: () => apiClient.post<void>("/auth/logout"),
+  // Public (permitAll on sso-admin's SecurityConfig) — the user
+  // hasn't logged in yet, they're requesting a reset link. Always
+  // resolves 200 even for an unknown email (UserAdminService never
+  // discloses which addresses are registered) — the caller can't
+  // distinguish "email sent" from "email unknown" by design.
+  forgotPassword: (email: string) =>
+    apiClient.get<void>(`/sso-admin/forgotPassword?email=${encodeURIComponent(email)}`, {
+      skipAuth: true,
+    }),
 };
 
 // ====================== users ======================
