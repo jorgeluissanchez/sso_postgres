@@ -88,10 +88,20 @@ export function RoutesListPage() {
       align: "right",
       render: (r) => (
         <div className="flex justify-end gap-2">
-          <Button size="sm" variant="secondary" onClick={() => setEditing(r)}>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setEditing(r)}
+            data-testid={`edit-${r.id}`}
+          >
             Editar
           </Button>
-          <Button size="sm" variant="danger" onClick={() => setDeleting(r)}>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => setDeleting(r)}
+            data-testid={`delete-${r.id}`}
+          >
             Eliminar
           </Button>
         </div>
@@ -103,7 +113,9 @@ export function RoutesListPage() {
     <section>
       <header className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold text-slate-900">Rutas</h1>
-        <Button onClick={() => setCreating(true)}>+ Nueva ruta</Button>
+        <Button onClick={() => setCreating(true)} data-testid="new-route">
+          + Nueva ruta
+        </Button>
       </header>
       <Table
         columns={columns}
