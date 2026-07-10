@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
+import { SearchInput } from "@/components/ui/SearchInput";
 import { Table, type Column } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
 import {
@@ -29,12 +30,23 @@ export function MicroservicesListPage() {
   const [editing, setEditing] = useState<MicroserviceResponse | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<MicroserviceResponse | null>(null);
+  const [search, setSearch] = useState("");
 
   // REST rows only; QUERY services are managed on their own page.
   const restRows = useMemo(
     () => (microservices.data ?? []).filter((m) => m.kind === "REST"),
     [microservices.data],
   );
+
+  const filteredMicroservices = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return restRows;
+    return restRows.filter(
+      (m) =>
+        m.serviceId.toLowerCase().includes(q) ||
+        (m.description ?? "").toLowerCase().includes(q),
+    );
+  }, [restRows, search]);
 
   async function handleSubmit(values: MicroserviceFormValues & { id?: number }) {
     try {
@@ -101,12 +113,19 @@ export function MicroservicesListPage() {
         <h1 className="text-xl font-semibold text-slate-900">Microservicios</h1>
         <Button onClick={() => setCreating(true)}>+ Nuevo microservicio</Button>
       </header>
+      <div className="mb-3">
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Buscar por service ID o descripción…"
+        />
+      </div>
       <Table
         columns={columns}
-        rows={restRows}
+        rows={filteredMicroservices}
         rowKey={(m) => m.id}
         loading={microservices.isLoading}
-        empty="Aún no hay microservicios REST."
+        empty={search ? "Sin resultados." : "Aún no hay microservicios REST."}
       />
       <MicroserviceFormDrawer
         open={creating || editing !== null}

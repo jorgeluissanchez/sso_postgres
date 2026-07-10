@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
+import { SearchInput } from "@/components/ui/SearchInput";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Table, type Column } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
@@ -43,6 +44,7 @@ export function QueryServicesListPage() {
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<MicroserviceResponse | null>(null);
   const [logsFor, setLogsFor] = useState<MicroserviceResponse | null>(null);
+  const [search, setSearch] = useState("");
 
   const rows = useMemo(
     () => (microservices.data ?? []).filter((m) => m.kind === "QUERY"),
@@ -171,6 +173,16 @@ export function QueryServicesListPage() {
     [],
   );
 
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (m) =>
+        (m.instanceName ?? m.serviceId).toLowerCase().includes(q) ||
+        (m.dialect ?? "").toLowerCase().includes(q),
+    );
+  }, [rows, search]);
+
   return (
     <section>
       <header className="mb-4 flex items-center justify-between gap-4">
@@ -189,15 +201,25 @@ export function QueryServicesListPage() {
         </div>
       </header>
 
+      <div className="mb-3">
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Buscar por instancia o dialecto…"
+        />
+      </div>
+
       <Table
         columns={columns}
-        rows={rows}
+        rows={filteredRows}
         rowKey={(m) => m.id}
         loading={microservices.isLoading}
         empty={
           microservices.isError
             ? "No se pudo cargar la lista. ¿sso-admin está UP?"
-            : "Aún no hay query services. Crea uno con el botón de arriba."
+            : search
+              ? "Sin resultados."
+              : "Aún no hay query services. Crea uno con el botón de arriba."
         }
       />
 

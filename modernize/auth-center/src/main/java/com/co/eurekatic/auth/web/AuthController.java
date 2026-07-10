@@ -15,7 +15,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -42,7 +41,8 @@ public class AuthController {
     private final EffectiveRolesResolver effectiveRoles;
     private final CachedUserSummaryService cachedUserSummary;
 
-    public AuthController(UserRepository userRepository, JwtTokenService jwt,
+    public AuthController(UserRepository userRepository, RoleRepository roleRepository,
+                           AppRepository appRepository, JwtTokenService jwt,
                            EffectiveRolesResolver effectiveRoles,
                            CachedUserSummaryService cachedUserSummary) {
         this.userRepository = userRepository;
