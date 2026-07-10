@@ -154,6 +154,9 @@ class SsoAdminIntegrationTest {
         jdbcTemplate.execute("DELETE FROM role_query");
         jdbcTemplate.execute("DELETE FROM role_write");
         jdbcTemplate.execute("DELETE FROM role_app");
+        jdbcTemplate.execute("DELETE FROM app_route");
+        jdbcTemplate.execute("DELETE FROM app_microservice");
+        jdbcTemplate.execute("DELETE FROM app_users");
         jdbcTemplate.execute("DELETE FROM role_endpoint");
         queryRepository.deleteAll();
         writeDefinitionRepository.deleteAll();
@@ -176,6 +179,15 @@ class SsoAdminIntegrationTest {
         root.setActive(true);
         root.addRole(admin);
         userRepository.save(root);
+
+        // Seed the SSO-ADMIN app and bind the ADMIN role to it.
+        // SsoAdminAppAccessManager enforces role_app binding on every
+        // request — without this, all authenticated requests get 403.
+        App ssoAdminApp = new App();
+        ssoAdminApp.setName("SSO-ADMIN");
+        ssoAdminApp.setDescription("SSO Admin Console");
+        ssoAdminApp.addRole(admin);
+        appRepository.save(ssoAdminApp);
 
         // Default no-op so the mock doesn't blow up.
         doNothing().when(emailServiceMock).sendActivationEmail(any(), any());

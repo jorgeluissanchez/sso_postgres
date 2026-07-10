@@ -1,5 +1,6 @@
 package com.co.eurekatic.auth.web;
 
+import com.co.eurekatic.auth.security.CachedUserSummaryService;
 import com.co.eurekatic.auth.security.EffectiveRolesResolver;
 import com.co.eurekatic.common.dto.AuthDtos.AppSummary;
 import com.co.eurekatic.common.dto.AuthDtos.UserSummary;
@@ -39,15 +40,17 @@ public class AuthController {
     private final AppRepository appRepository;
     private final JwtTokenService jwt;
     private final EffectiveRolesResolver effectiveRoles;
+    private final CachedUserSummaryService cachedUserSummary;
 
-    public AuthController(UserRepository userRepository, RoleRepository roleRepository,
-                           AppRepository appRepository, JwtTokenService jwt,
-                           EffectiveRolesResolver effectiveRoles) {
+    public AuthController(UserRepository userRepository, JwtTokenService jwt,
+                           EffectiveRolesResolver effectiveRoles,
+                           CachedUserSummaryService cachedUserSummary) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.appRepository = appRepository;
         this.jwt = jwt;
         this.effectiveRoles = effectiveRoles;
+        this.cachedUserSummary = cachedUserSummary;
     }
 
     /**
@@ -86,13 +89,16 @@ public class AuthController {
      * Returns the authenticated user's profile. Requires a valid Bearer
      * token (the {@link JwtAuthenticationFilter} populates the
      * SecurityContext from the token).
+     *
+     * <p>Profile fetch is served from {@code CachedUserSummaryService}
+     * (Redis-backed {@code @Cacheable("user-by-email")}) so the SPA
+     * does not hit Postgres on every page load. See
+     * {@link CachedUserSummaryService} for the staleness tradeoff.
      */
     @GetMapping("/getInfoUser")
     public ResponseEntity<UserSummary> getInfoUser(Authentication authentication) {
         String email = principalName(authentication);
-        User u = userRepository.findByEmail(email)
-                .orElseThrow(() -> new UsernameNotFoundException(email));
-        return ResponseEntity.ok(toSummary(u));
+        return ResponseEntity.ok(cachedUserSummary.forEmail(email));
     }
 
     /**
