@@ -7,8 +7,10 @@ import { RestorePasswordPage } from "@/auth/RestorePasswordPage";
 import { App } from "@/App";
 import { GroupsListPage } from "@/pages/groups/GroupsListPage";
 import { MicroservicesListPage } from "@/pages/microservices/MicroservicesListPage";
+import { QueryServicesListPage } from "@/pages/query-services/QueryServicesListPage";
 import { QueriesCatalogPage } from "@/pages/queries/QueriesCatalogPage";
 import { QueriesAdminPage } from "@/pages/queries/QueriesAdminPage";
+import { QueriesDynamicPage } from "@/pages/queries/QueriesDynamicPage";
 import { EndpointsListPage } from "@/pages/endpoints/EndpointsListPage";
 import { RoutesListPage } from "@/pages/routes/RoutesListPage";
 import { RolesListPage } from "@/pages/roles/RolesListPage";
@@ -17,9 +19,8 @@ import { AppsListPage } from "@/pages/apps/AppsListPage";
 import { WritesListPage } from "@/pages/writes/WritesListPage";
 
 /**
- * Router. Public routes: /login, /forgot-password (request a
- * reset link — linked from LoginPage), /activate (legacy
- * top-level for already-sent emails), /admin/activate and
+ * Router. Public routes: /login, /activate (legacy top-level for
+ * already-sent emails), /admin/activate and
  * /admin/restore-password (the SPA-under-admin paths the email
  * links now point at). Everything else under /admin is gated
  * by {@link RequireAuth}. We use the data router so loaders
@@ -34,9 +35,6 @@ import { WritesListPage } from "@/pages/writes/WritesListPage";
  */
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
-  // Step 1 of the forgot-password flow: request the reset link.
-  // Step 2 (/admin/restore-password) is where the emailed link
-  // lands and the password actually changes.
   { path: "/forgot-password", element: <ForgotPasswordPage /> },
   // Legacy top-level route — emails sent before this branch
   // landed link here. Kept for one cycle of backward compat;
@@ -64,10 +62,10 @@ export const router = createBrowserRouter([
           { path: "roles", element: <RolesListPage /> },
           { path: "groups", element: <GroupsListPage /> },
           { path: "microservices", element: <MicroservicesListPage /> },
+          { path: "query-services", element: <QueryServicesListPage /> },
           { path: "queries", element: <QueriesCatalogPage /> },
           { path: "query-catalog", element: <QueriesAdminPage /> },
-          { path: "query-services", element: <Navigate to="microservices" replace /> },
-          { path: "dynamic-crud", element: <Navigate to="queries" replace /> },
+          { path: "dynamic-crud", element: <QueriesDynamicPage /> },
           { path: "endpoints", element: <EndpointsListPage /> },
           { path: "routes", element: <RoutesListPage /> },
           { path: "apps", element: <AppsListPage /> },
