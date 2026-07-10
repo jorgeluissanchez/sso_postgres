@@ -22,7 +22,7 @@ function renderRestore(initialEntry: string) {
             element={<RestorePasswordPage />}
           />
           <Route
-            path="/login"
+            path="/admin/login"
             element={<div data-testid="login-landing">login</div>}
           />
         </Routes>
@@ -81,12 +81,12 @@ describe("RestorePasswordPage", () => {
   });
 
   it("POSTs {token, password} to /sso-admin/restorePassword and shows the success view", async () => {
-    // Same caveat as ActivatePage: the apiClient parses any
-    // 2xx-non-204 body as JSON, so a Response(null, ...) would
-    // throw inside handleResponse. "{}" matches what the
-    // controller returns in practice.
+    // The controller returns ResponseEntity.ok().build() — a
+    // genuinely empty 200 body, not "{}". handleResponse must
+    // treat that as "no content" rather than calling resp.json()
+    // on it (which throws "Unexpected end of JSON input").
     fetchSpy.mockResolvedValueOnce(
-      new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }),
+      new Response("", { status: 200, headers: { "Content-Type": "application/json" } }),
     );
     renderRestore("/admin/restore-password?token=tok-restore");
 
