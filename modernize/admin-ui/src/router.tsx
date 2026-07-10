@@ -8,7 +8,6 @@ import { App } from "@/App";
 import { GroupsListPage } from "@/pages/groups/GroupsListPage";
 import { MicroservicesListPage } from "@/pages/microservices/MicroservicesListPage";
 import { QueryServicesListPage } from "@/pages/query-services/QueryServicesListPage";
-import { QueriesCatalogPage } from "@/pages/queries/QueriesCatalogPage";
 import { QueriesAdminPage } from "@/pages/queries/QueriesAdminPage";
 import { QueriesDynamicPage } from "@/pages/queries/QueriesDynamicPage";
 import { EndpointsListPage } from "@/pages/endpoints/EndpointsListPage";
@@ -63,7 +62,11 @@ export const router = createBrowserRouter([
           { path: "groups", element: <GroupsListPage /> },
           { path: "microservices", element: <MicroservicesListPage /> },
           { path: "query-services", element: <QueryServicesListPage /> },
-          { path: "queries", element: <QueriesCatalogPage /> },
+          // Legacy path — the consumer-only "Queries Catalog" page
+          // was merged into the admin page at /admin/query-catalog
+          // (which now also executes). Redirect so old links/menus
+          // still land somewhere sane.
+          { path: "queries", element: <Navigate to="/admin/query-catalog" replace /> },
           { path: "query-catalog", element: <QueriesAdminPage /> },
           { path: "dynamic-crud", element: <QueriesDynamicPage /> },
           { path: "endpoints", element: <EndpointsListPage /> },
